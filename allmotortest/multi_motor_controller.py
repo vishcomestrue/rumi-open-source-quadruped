@@ -388,8 +388,9 @@ class MultiMotorController:
 def test_motors(num_motors=3, control_rate=100, port="/dev/ttyUSB0", baudrate=2000000,
                 write_read_delay=0.0005, step_size=40):
     """
-    Test script for N motors with stepped position sequence.
-    Moves through: 0 → step → 2×step → ... → 4000 → ... → step → (loop)
+    Test script for N motors with incremental position control.
+    Pattern: Read current position → Add step_size → Write new position → Repeat
+    Motors oscillate between 0 and 4000 units, reversing direction at limits.
 
     Args:
         num_motors: Number of motors to control (default: 3)
@@ -423,9 +424,10 @@ def test_motors(num_motors=3, control_rate=100, port="/dev/ttyUSB0", baudrate=20
         return
 
     print(f"[INFO] Starting motor movement test...")
-    print(f"[INFO] {num_motors} motors will move through stepped positions")
-    print(f"[INFO] Pattern: 0 → {step_size} → {step_size*2} → ... → 4000 → ... → {step_size} → (loop)")
+    print(f"[INFO] {num_motors} motors with incremental position control")
+    print(f"[INFO] Pattern: Read position → Add {step_size} units → Write → Repeat")
     print(f"[INFO] Step size: {step_size} units (~{step_size*0.088:.2f}°)")
+    print(f"[INFO] Range: 0 to 4000 units (reverses at limits)")
     print(f"[INFO] Target frequency: {control_rate} Hz")
 
     # Warm up communication with a few test reads
@@ -452,36 +454,48 @@ def test_motors(num_motors=3, control_rate=100, port="/dev/ttyUSB0", baudrate=20
         loop_times = []
         iteration = 0
 
-        # Define position sequence using configurable step size
+        # Position limits
+        min_position = 0
         max_position = 4000
 
-        # Generate sequence: going up from 0 to 4000
-        up_sequence = list(range(0, max_position + 1, step_size))
-        # Generate sequence: going down from (max-step) to step (avoiding repeat of max and 0)
-        down_sequence = list(range(max_position - step_size, 0, -step_size))
+        # Direction: 1 = ascending, -1 = descending
+        direction = 1
 
-        position_sequence = up_sequence + down_sequence
-        sequence_index = 0
-
-        # Print compact representation
-        print(f"[INFO] Position sequence: 0 → {step_size} → {step_size*2} → ... → {max_position} → {max_position-step_size} → ... → {step_size} → (loop)")
+        print(f"[INFO] Incremental position control: Read current → Add step → Write new position")
         print(f"[INFO] Step size: {step_size} units (~{step_size*0.088:.2f}°)")
-        print(f"[INFO] Total positions per cycle: {len(position_sequence)}")
-        print(f"[INFO] Full cycle time at {control_rate}Hz: {len(position_sequence)/control_rate:.2f} seconds\n")
+        print(f"[INFO] Range: {min_position} to {max_position} units")
+        print(f"[INFO] Motors will oscillate between min and max positions\n")
+
+        # Read initial positions
+        print("[INFO] Reading initial positions...")
+        current_positions = controller.read_positions()
+        if current_positions is None:
+            print("[ERROR] Could not read initial positions!")
+            return
+
+        print("[INFO] Initial positions:", {motor_id: pos for motor_id, pos in current_positions.items()})
 
         while True:
             loop_start = time.time()
 
-            # Get current target position from sequence (in Dynamixel units)
-            target_position_dxl = position_sequence[sequence_index]
-
-            # Create positions dict for all motors (all motors move to same position)
-            positions_dxl = {}
+            # Calculate next positions (current + step in current direction)
+            next_positions = {}
             for motor_id in motor_ids:
-                positions_dxl[motor_id] = target_position_dxl
+                current_pos = current_positions[motor_id]
+                next_pos = current_pos + (step_size * direction)
+
+                # Check bounds and reverse direction if needed
+                if next_pos >= max_position:
+                    next_pos = max_position
+                    direction = -1  # Start going down
+                elif next_pos <= min_position:
+                    next_pos = min_position
+                    direction = 1   # Start going up
+
+                next_positions[motor_id] = next_pos
 
             # Write positions to all motors (ONE packet)
-            success = controller.write_positions(positions_dxl)
+            success = controller.write_positions(next_positions)
             if not success:
                 print("\n[ERROR] Write failed!")
                 break
@@ -491,10 +505,14 @@ def test_motors(num_motors=3, control_rate=100, port="/dev/ttyUSB0", baudrate=20
                 time.sleep(write_read_delay)
 
             # Read current positions from all motors (ONE packet)
-            current_positions = controller.read_positions()
-            if current_positions is None:
-                print("\n[ERROR] Read failed!")
-                break
+            new_positions = controller.read_positions()
+            if new_positions is None:
+                print(f"\n[WARNING] Read failed at iteration {iteration}, continuing with last known positions...")
+                # Continue with previous positions instead of breaking
+                iteration += 1
+                continue
+            else:
+                current_positions = new_positions
 
             # Calculate loop time and frequency
             loop_end = time.time()
@@ -502,37 +520,9 @@ def test_motors(num_motors=3, control_rate=100, port="/dev/ttyUSB0", baudrate=20
             loop_times.append(loop_time_ms)
             frequency = 1000.0 / loop_time_ms if loop_time_ms > 0 else 0
 
-            # Print status every iteration (or every N iterations for high frequency)
-            # print_interval = 1 if control_rate <= 20 else 10
-            # if iteration % print_interval == 0:
-            #     status = f"Step {sequence_index+1}/{len(position_sequence)} | "
-            #     status += f"Target: {target_position_dxl:4d} | "
-            #     status += f"Loop: {loop_time_ms:6.2f}ms ({frequency:6.1f}Hz) | "
-
-            #     # Show motor positions based on number of motors
-            #     if num_motors <= 3:
-            #         # Show all motors with target→actual
-            #         for motor_id in motor_ids:
-            #             status += f"M{motor_id}:{target_position_dxl:4d}→{current_positions[motor_id]:4d} "
-            #     elif num_motors <= 6:
-            #         # Show all motors in compact format
-            #         for motor_id in motor_ids:
-            #             status += f"M{motor_id}:{current_positions[motor_id]:4d} "
-            #     else:
-            #         # Show first 3 and last 3 motors
-            #         for motor_id in motor_ids[:3]:
-            #             status += f"M{motor_id}:{current_positions[motor_id]:4d} "
-            #         status += "... "
-            #         for motor_id in motor_ids[-3:]:
-            #             status += f"M{motor_id}:{current_positions[motor_id]:4d} "
-
-            #     print(status)
-
             # Control loop timing - sleep to achieve target rate
             time.sleep(sleep_time)
 
-            # Move to next position in sequence (loop back to start)
-            sequence_index = (sequence_index + 1) % len(position_sequence)
             iteration += 1
 
     except KeyboardInterrupt:
