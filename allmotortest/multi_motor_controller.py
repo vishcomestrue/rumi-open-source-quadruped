@@ -1,20 +1,46 @@
 #!/usr/bin/env python3
+# rumi-custom-quadruped — Reinforcement-learning-based quadruped-robot control framework for custom quadruped
+# Copyright (C) 2025  Vishwanath R
+#
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
 """
 Multi-Motor Dynamixel Controller
 Controls multiple Dynamixel motors simultaneously at high frequency.
-Easily scalable from 3 to 12+ motors.
+Easily scalable from 3 to 12+ motors with automatic discovery.
 
 Architecture:
 - GroupSyncWrite: Write all motor positions in ONE packet
 - GroupSyncRead: Read all motor positions in ONE packet
 - Achieves 80-120Hz control frequency
+- Automatic motor discovery via broadcast ping
+- Power measurement support (current, voltage, energy tracking)
 
 Usage:
-    # For 3 motors
-    controller = MultiMotorController(motor_ids=[1, 2, 3])
+    # Auto-discover and control first 3 motors
+    controller = MultiMotorController(num_motors=3)
 
-    # For 12 motors
-    controller = MultiMotorController(motor_ids=list(range(1, 13)))
+    # Auto-discover and control first 12 motors
+    controller = MultiMotorController(num_motors=12)
+
+    # Connect and start controlling
+    controller.connect()
+    controller.write_positions({1: 2048, 2: 3000, 3: 1500})
+    positions = controller.read_positions()
+
+    # Read power measurements (if supported)
+    power_data = controller.read_power_measurements()
 """
 
 import math
