@@ -191,5 +191,5 @@ Power measurement is automatically enabled for motors that support it (Protocol 
 ## Files
 
 - `multi_motor_controller.py` - Main controller class and test script with auto-discovery and power measurement
-- `multi_motor_controller copy*.py` - Previous versions showing development history
 - `mx_64.md` - Motor specifications and control table
+- `README.md` - This documentation file
