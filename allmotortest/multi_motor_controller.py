@@ -48,18 +48,18 @@ class MultiMotorController:
     TORQUE_ENABLE = 1
     TORQUE_DISABLE = 0
 
-    def __init__(self, port="/dev/ttyUSB0", motor_ids=[1, 2, 3], baudrate=2000000):
+    def __init__(self, port="/dev/ttyUSB0", num_motors=3, baudrate=2000000):
         """
-        Initialize Multi-Motor controller.
+        Initialize Multi-Motor controller with automatic motor discovery.
 
         Args:
             port: Serial port path (e.g., "/dev/ttyUSB0")
-            motor_ids: List of motor IDs to control (e.g., [1, 2, 3] or list(range(1, 13)))
+            num_motors: Number of motors to control (will select first N motors by ID)
             baudrate: Communication baudrate (default: 2Mbps)
         """
         self.port = port
-        self.motor_ids = motor_ids
-        self.num_motors = len(motor_ids)
+        self.num_motors = num_motors
+        self.motor_ids = []  # Will be populated by connect()
         self.BAUDRATE = baudrate
         self.connected = False
 
@@ -91,9 +91,44 @@ class MultiMotorController:
             'write_errors': 0,
         }
 
-        print(f"[Multi-Motor Controller] Initialized for {self.num_motors} motors: {motor_ids}")
+        print(f"[Multi-Motor Controller] Initialized for {self.num_motors} motor(s)")
         print(f"[Multi-Motor Controller] Port: {port}")
         print(f"[Multi-Motor Controller] Baudrate: {self.BAUDRATE} bps")
+        print(f"[Multi-Motor Controller] Motors will be auto-discovered on connect()")
+
+    def scan_motors(self, verbose=True):
+        """
+        Scan for all connected Dynamixel motors using broadcast ping.
+
+        Args:
+            verbose: If True, print detailed scan results
+
+        Returns:
+            list: Sorted list of discovered motor IDs, or empty list on error
+        """
+        try:
+            # Perform broadcast ping to discover motors
+            data_list, comm_result = self.packet_handler.broadcastPing(self.port_handler)
+
+            if comm_result != COMM_SUCCESS:
+                print(f"[ERROR] Broadcast ping failed: {self.packet_handler.getTxRxResult(comm_result)}")
+                return []
+
+            # Extract and sort motor IDs
+            motor_ids = sorted(data_list.keys())
+
+            # Display results
+            if verbose and len(motor_ids) > 0:
+                print(f"[Motor Scan] Found {len(motor_ids)} motor(s):")
+                for motor_id in motor_ids:
+                    model_num, fw_version = data_list[motor_id]
+                    print(f"  Motor ID {motor_id}: Model {model_num}, Firmware v{fw_version}")
+
+            return motor_ids
+
+        except Exception as e:
+            print(f"[ERROR] Exception during motor scan: {e}")
+            return []
 
     def connect(self):
         """
@@ -113,6 +148,43 @@ class MultiMotorController:
             print(f"[ERROR] Failed to set baudrate to {self.BAUDRATE}")
             return False
         print(f"[SUCCESS] Set baudrate to {self.BAUDRATE}")
+
+        # Scan for motors
+        print(f"\n[INFO] Scanning for connected motors...")
+        discovered_motors = self.scan_motors(verbose=True)
+
+        # Handle no motors found
+        if len(discovered_motors) == 0:
+            print(f"[ERROR] No motors found on {self.port}")
+            print(f"[ERROR] Please check:")
+            print(f"  - Motors are powered")
+            print(f"  - Connections are secure")
+            print(f"  - Baudrate matches motor configuration ({self.BAUDRATE} bps)")
+            self.port_handler.closePort()
+            return False
+
+        # Handle insufficient motors (prompt user)
+        if len(discovered_motors) < self.num_motors:
+            print(f"\n[WARNING] Found {len(discovered_motors)} motor(s), but {self.num_motors} requested")
+            print(f"[WARNING] Discovered motor IDs: {discovered_motors}")
+
+            try:
+                response = input(f"[CONFIRM] Proceed with {len(discovered_motors)} motor(s)? (y/n): ").strip().lower()
+                if response != 'y':
+                    print(f"[INFO] User cancelled. Exiting...")
+                    self.port_handler.closePort()
+                    return False
+            except (KeyboardInterrupt, EOFError):
+                print("\n[INFO] User cancelled")
+                self.port_handler.closePort()
+                return False
+
+            self.num_motors = len(discovered_motors)
+            print(f"[INFO] Proceeding with {self.num_motors} motor(s)")
+
+        # Select first n motors (lowest IDs)
+        self.motor_ids = discovered_motors[:self.num_motors]
+        print(f"\n[INFO] Selected motors: {self.motor_ids}")
 
         # Enable torque for all motors
         print(f"\n[INFO] Enabling torque for {self.num_motors} motors...")
@@ -403,7 +475,8 @@ def test_motors(num_motors=3, control_rate=100, port="/dev/ttyUSB0", baudrate=20
     print("\n" + "="*70)
     print(f"MULTI-MOTOR CONTROLLER TEST - {num_motors} MOTORS")
     print("="*70)
-    print(f"Motors: IDs 1-{num_motors}")
+    print(f"Requested motors: {num_motors}")
+    print(f"Motors will be auto-discovered on connect")
     print(f"Target control rate: {control_rate} Hz")
     print(f"Port: {port}")
     print(f"Baudrate: {baudrate} bps")
@@ -411,10 +484,9 @@ def test_motors(num_motors=3, control_rate=100, port="/dev/ttyUSB0", baudrate=20
     print("="*70 + "\n")
 
     # Create controller for specified number of motors
-    motor_ids = list(range(1, num_motors + 1))
     controller = MultiMotorController(
         port=port,
-        motor_ids=motor_ids,
+        num_motors=num_motors,
         baudrate=baudrate
     )
 
@@ -480,7 +552,7 @@ def test_motors(num_motors=3, control_rate=100, port="/dev/ttyUSB0", baudrate=20
 
             # Calculate next positions (current + step in current direction)
             next_positions = {}
-            for motor_id in motor_ids:
+            for motor_id in controller.motor_ids:
                 current_pos = current_positions[motor_id]
                 next_pos = current_pos + (step_size * direction)
 
@@ -560,29 +632,29 @@ if __name__ == "__main__":
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  # Test 3 motors at 100Hz (default)
+  # Auto-discover and use first 3 motors at 100Hz (default)
   python3 multi_motor_controller.py
 
-  # Test 12 motors at 100Hz
+  # Auto-discover and use first 12 motors at 100Hz
   python3 multi_motor_controller.py -n 12
 
-  # Test 6 motors at 50Hz
+  # Auto-discover 6 motors at 50Hz
   python3 multi_motor_controller.py -n 6 -r 50
 
-  # Test 3 motors at 200Hz with custom port
-  python3 multi_motor_controller.py -r 200 -p /dev/ttyUSB1
+  # Auto-discover with custom port and baudrate
+  python3 multi_motor_controller.py -p /dev/ttyUSB1 -b 3000000
 
-  # Test 12 motors at 80Hz with 3Mbps baudrate
-  python3 multi_motor_controller.py -n 12 -r 80 -b 3000000
-
-  # Test with custom step size (larger steps, faster cycle)
+  # Auto-discover with custom step size (larger steps, faster cycle)
   python3 multi_motor_controller.py -s 100
 
-  # Test with small steps for fine control
+  # Auto-discover with small steps for fine control
   python3 multi_motor_controller.py -s 20 -r 50
 
   # Test with no delay between write/read (maximum speed)
   python3 multi_motor_controller.py -d 0
+
+Note: Motors are auto-discovered on startup using broadcast ping.
+      The first N motors (by ID number) will be selected and controlled.
         """
     )
 
@@ -590,7 +662,7 @@ Examples:
         "-n", "--num-motors",
         type=int,
         default=3,
-        help="Number of motors to control (default: 3). Motor IDs will be 1 to N."
+        help="Number of motors to control (default: 3). Motors will be auto-discovered and sorted by ID."
     )
 
     parser.add_argument(
