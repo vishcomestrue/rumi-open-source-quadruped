@@ -32,6 +32,12 @@ High-frequency controller for simultaneous control of multiple Dynamixel motors 
 ## Quick Start
 
 ```bash
+# First, discover connected motors
+python3 ping_motors.py
+
+# Scan with custom settings
+python3 ping_motors.py --device /dev/ttyUSB1 --protocol 2.0 --baudrate 1000000
+
 # Test 3 motors at 100Hz (default step size: 40 units)
 python3 multi_motor_controller.py
 
@@ -66,13 +72,6 @@ python3 multi_motor_controller.py -h
 | `-b BAUD` | Baudrate (bps) | 2000000 |
 | `-d SEC` | Write-read delay (sec) | 0.0005 |
 | `-s STEP` | Position step size (units) | 40 |
-
-## Performance
-
-Expected frequencies with 2Mbps baudrate:
-- **3 motors**: 100-120 Hz
-- **6 motors**: 90-110 Hz
-- **12 motors**: 80-100 Hz
 
 ## Test Pattern (Incremental Positioning)
 
@@ -190,6 +189,7 @@ Power measurement is automatically enabled for motors that support it (Protocol 
 
 ## Files
 
+- `ping_motors.py` - Motor discovery utility to detect all connected Dynamixel motors
 - `multi_motor_controller.py` - Main controller class and test script with auto-discovery and power measurement
 - `mx_64.md` - Motor specifications and control table
 - `README.md` - This documentation file
