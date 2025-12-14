@@ -1,4 +1,20 @@
 #!/usr/bin/env python3
+# rumi-custom-quadruped — Reinforcement-learning-based quadruped-robot control framework for custom quadruped
+# Copyright (C) 2025  Vishwanath R
+#
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
 """
 MPU6050 IMU Reader for Quadruped Robot
 
@@ -16,9 +32,6 @@ Data Output:
     - Accelerometer: 3-axis (x, y, z) in m/s²
     - Gyroscope: 3-axis (x, y, z) in rad/s
     - Orientation: Roll, pitch, yaw in radians (computed via complementary filter)
-
-Author: Claude Code
-Date: 2025-12-15
 """
 
 import sys
