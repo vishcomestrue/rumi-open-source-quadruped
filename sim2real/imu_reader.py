@@ -30,42 +30,21 @@ Hardware:
 
 Data Output:
     - Accelerometer: 3-axis (x, y, z) in m/s²
-    - Gyroscope: 3-axis (x, y, z) in rad/s
+    - Gyroscope: 3-axis (x, y, z) in rad/s (angular velocity)
     - Orientation: Roll, pitch, yaw in radians (computed via complementary filter)
+    - Velocity: 3-axis world-frame linear velocity (m/s) with gravity compensation
 """
 
 import sys
 import time
 import math
-import struct
-from typing import Dict, Tuple, Optional
+from typing import Dict
 
 try:
-    import smbus2
+    from mpu6050 import mpu6050
 except ImportError:
-    print("ERROR: smbus2 not installed. Install with: uv pip install smbus2")
+    print("ERROR: mpu6050-raspberrypi not installed. Install with: pip install mpu6050-raspberrypi")
     sys.exit(1)
-
-
-# ============================================================================
-# MPU6050 Register Definitions
-# ============================================================================
-
-# Identity
-WHO_AM_I = 0x75
-
-# Power Management
-PWR_MGMT_1 = 0x6B
-
-# Configuration
-SMPLRT_DIV = 0x19      # Sample Rate Divider
-CONFIG = 0x1A          # DLPF Configuration
-GYRO_CONFIG = 0x1B     # Gyroscope Configuration
-ACCEL_CONFIG = 0x1C    # Accelerometer Configuration
-
-# Data Registers
-ACCEL_XOUT_H = 0x3B    # Accelerometer data start (6 bytes)
-GYRO_XOUT_H = 0x43     # Gyroscope data start (6 bytes)
 
 
 # ============================================================================
@@ -73,225 +52,138 @@ GYRO_XOUT_H = 0x43     # Gyroscope data start (6 bytes)
 # ============================================================================
 
 class MPU6050Reader:
-    """
-    Read data from MPU6050 IMU at high frequency.
+    """Read data from MPU6050 IMU at high frequency with velocity tracking."""
 
-    Features:
-        - Configurable sample rate (default 40 Hz)
-        - Automatic gyroscope calibration
-        - Complementary filter for orientation estimation
-        - I2C communication via smbus2
-
-    Usage:
-        # Initialize
-        imu = MPU6050Reader(sample_rate=40)
-        imu.calibrate()
-
-        # Read data
-        data = imu.read_data()
-        print(data['orientation']['roll'])
-
-        # Close
-        imu.close()
-    """
-
-    def __init__(self, bus: int = 1, address: int = 0x68, sample_rate: int = 40):
-        """
-        Initialize MPU6050 reader.
-
-        Args:
-            bus: I2C bus number (1 for Raspberry Pi)
-            address: MPU6050 I2C address (0x68 or 0x69)
-            sample_rate: Target sample rate in Hz (default: 40)
-
-        Raises:
-            RuntimeError: If MPU6050 is not found at specified address
-        """
-        self.bus_num = bus
+    def __init__(self, address: int = 0x68, sample_rate: int = 40):
+        """Initialize MPU6050 reader."""
         self.address = address
         self.target_sample_rate = sample_rate
-        self.dt = 1.0 / sample_rate  # Time step for integration
+        self.dt = 1.0 / sample_rate
 
-        # Initialize I2C bus
-        self.bus = smbus2.SMBus(bus)
-
-        # Verify sensor presence
         try:
-            who_am_i = self.bus.read_byte_data(self.address, WHO_AM_I)
-            if who_am_i != 0x68:
-                raise RuntimeError(
-                    f"MPU6050 not found at address {hex(self.address)}. "
-                    f"WHO_AM_I returned {hex(who_am_i)} (expected 0x68)"
-                )
-        except OSError as e:
-            raise RuntimeError(
-                f"Failed to communicate with MPU6050 at address {hex(self.address)}. "
-                f"Check I2C connection and permissions. Error: {e}"
-            )
+            self.sensor = mpu6050(address)
+        except Exception as e:
+            raise RuntimeError(f"Failed to communicate with MPU6050 at {hex(address)}: {e}")
 
-        # Wake up MPU6050 (it starts in sleep mode)
-        self.bus.write_byte_data(self.address, PWR_MGMT_1, 0x00)
-        time.sleep(0.1)
-
-        # Configure sensor
-        self._configure_sensor()
-
-        # Calibration offsets (will be set during calibrate())
+        # Calibration offsets
         self.gyro_offset = {'x': 0.0, 'y': 0.0, 'z': 0.0}
+        self.accel_offset = {'x': 0.0, 'y': 0.0, 'z': 0.0}
 
-        # Orientation state for complementary filter
-        self.roll = 0.0
-        self.pitch = 0.0
-        self.yaw = 0.0
+        # Orientation state - Initialize from accelerometer to eliminate startup transient
+        accel_data = self.sensor.get_accel_data()
+        ax, ay, az = accel_data['x'], accel_data['y'], accel_data['z']
+        self.roll = math.atan2(ay, math.sqrt(ax*ax + az*az))
+        self.pitch = math.atan2(-ax, math.sqrt(ay*ay + az*az))
+        self.yaw = 0.0  # No absolute reference for yaw (no magnetometer)
         self.last_time = time.time()
 
-        print(f"✓ MPU6050 initialized at address {hex(self.address)}")
+        # Velocity state
+        self.vx = 0.0
+        self.vy = 0.0
+        self.vz = 0.0
+        self.stationary_threshold = 0.2  # Tighter threshold for better zero detection
+        self.velocity_decay = 0.90  # More aggressive decay
 
-    def _configure_sensor(self):
-        """Configure MPU6050 sensor parameters."""
+        print(f"[OK] MPU6050 initialized at {hex(self.address)}, {self.target_sample_rate} Hz")
 
-        # Set gyroscope range: ±500 deg/s (GYRO_FS_SEL = 1)
-        self.bus.write_byte_data(self.address, GYRO_CONFIG, 0x08)
-        self.gyro_scale = 65.5  # LSB / (deg/s)
-
-        # Set accelerometer range: ±4g (ACCEL_FS_SEL = 1)
-        self.bus.write_byte_data(self.address, ACCEL_CONFIG, 0x08)
-        self.accel_scale = 8192.0  # LSB / g
-
-        # Configure DLPF: 42 Hz bandwidth
-        # This gives internal sample rate of 1kHz
-        self.bus.write_byte_data(self.address, CONFIG, 0x03)
-
-        # Set sample rate divider for target Hz output
-        # Sample Rate = 1000 Hz / (1 + SMPLRT_DIV)
-        # For 40 Hz: SMPLRT_DIV = (1000/40) - 1 = 24
-        divider = int(1000 / self.target_sample_rate) - 1
-        self.bus.write_byte_data(self.address, SMPLRT_DIV, divider)
-
-        time.sleep(0.1)  # Let settings take effect
-
-        print(f"  Accel range: ±4g")
-        print(f"  Gyro range: ±500 deg/s")
-        print(f"  DLPF: 42 Hz")
-        print(f"  Sample rate: {self.target_sample_rate} Hz")
-
-    def read_raw_data(self) -> Tuple[Tuple[int, int, int], Tuple[int, int, int]]:
-        """
-        Read raw accelerometer and gyroscope data.
-
-        Returns:
-            (accel_raw, gyro_raw): Tuples of (x, y, z) raw values (signed 16-bit)
-        """
-        # Read 6 bytes of accel data starting from ACCEL_XOUT_H
-        accel_data = self.bus.read_i2c_block_data(self.address, ACCEL_XOUT_H, 6)
-
-        # Read 6 bytes of gyro data starting from GYRO_XOUT_H
-        gyro_data = self.bus.read_i2c_block_data(self.address, GYRO_XOUT_H, 6)
-
-        # Convert to signed 16-bit integers (big-endian)
-        accel_x = struct.unpack('>h', bytes(accel_data[0:2]))[0]
-        accel_y = struct.unpack('>h', bytes(accel_data[2:4]))[0]
-        accel_z = struct.unpack('>h', bytes(accel_data[4:6]))[0]
-
-        gyro_x = struct.unpack('>h', bytes(gyro_data[0:2]))[0]
-        gyro_y = struct.unpack('>h', bytes(gyro_data[2:4]))[0]
-        gyro_z = struct.unpack('>h', bytes(gyro_data[4:6]))[0]
-
-        return (accel_x, accel_y, accel_z), (gyro_x, gyro_y, gyro_z)
-
-    def calibrate(self, num_samples: int = 100):
-        """
-        Calibrate gyroscope by measuring bias while stationary.
-
-        IMPORTANT: Robot must be completely stationary during calibration!
-
-        Args:
-            num_samples: Number of samples to average (default: 100)
-        """
-        print(f"\nCalibrating gyroscope (keep robot stationary)...")
-        print(f"Collecting {num_samples} samples...")
+    def calibrate(self, num_samples: int = 500):
+        """Calibrate gyroscope and accelerometer by measuring bias while stationary."""
+        print(f"\nCalibrating sensors ({num_samples} samples, keep stationary and level)...")
 
         gyro_x_sum = 0
         gyro_y_sum = 0
         gyro_z_sum = 0
+        accel_x_sum = 0
+        accel_y_sum = 0
+        accel_z_sum = 0
 
         for i in range(num_samples):
-            _, gyro_raw = self.read_raw_data()
-            gyro_x_sum += gyro_raw[0]
-            gyro_y_sum += gyro_raw[1]
-            gyro_z_sum += gyro_raw[2]
-            time.sleep(0.01)  # 10ms between samples
+            gyro_data = self.sensor.get_gyro_data()
+            accel_data = self.sensor.get_accel_data()
 
-        # Calculate average bias
+            gyro_x_sum += gyro_data['x']
+            gyro_y_sum += gyro_data['y']
+            gyro_z_sum += gyro_data['z']
+            accel_x_sum += accel_data['x']
+            accel_y_sum += accel_data['y']
+            accel_z_sum += accel_data['z']
+            time.sleep(0.01)
+
+        # Gyroscope offsets (should be zero when stationary)
         self.gyro_offset['x'] = gyro_x_sum / num_samples
         self.gyro_offset['y'] = gyro_y_sum / num_samples
         self.gyro_offset['z'] = gyro_z_sum / num_samples
 
-        print(f"✓ Calibration complete")
-        print(f"  Gyro offsets: X={self.gyro_offset['x']:.1f}, "
-              f"Y={self.gyro_offset['y']:.1f}, Z={self.gyro_offset['z']:.1f}")
+        # Accelerometer offsets (X,Y should be zero, Z should be gravity when level)
+        gravity = 9.81
+        self.accel_offset['x'] = (accel_x_sum / num_samples) - 0.0
+        self.accel_offset['y'] = (accel_y_sum / num_samples) - 0.0
+        self.accel_offset['z'] = (accel_z_sum / num_samples) - gravity
+
+        print(f"[OK] Gyro offsets: X={self.gyro_offset['x']:.2f}, "
+              f"Y={self.gyro_offset['y']:.2f}, Z={self.gyro_offset['z']:.2f} deg/s")
+        print(f"[OK] Accel offsets: X={self.accel_offset['x']:.3f}, "
+              f"Y={self.accel_offset['y']:.3f}, Z={self.accel_offset['z']:.3f} m/s²")
+
+    def get_raw_data(self):
+        """Get raw 16-bit sensor values before scaling."""
+        raw_accel_x = self.sensor.read_i2c_word(self.sensor.ACCEL_XOUT0)
+        raw_accel_y = self.sensor.read_i2c_word(self.sensor.ACCEL_YOUT0)
+        raw_accel_z = self.sensor.read_i2c_word(self.sensor.ACCEL_ZOUT0)
+        raw_gyro_x = self.sensor.read_i2c_word(self.sensor.GYRO_XOUT0)
+        raw_gyro_y = self.sensor.read_i2c_word(self.sensor.GYRO_YOUT0)
+        raw_gyro_z = self.sensor.read_i2c_word(self.sensor.GYRO_ZOUT0)
+
+        return {
+            'accel': {'x': raw_accel_x, 'y': raw_accel_y, 'z': raw_accel_z},
+            'gyro': {'x': raw_gyro_x, 'y': raw_gyro_y, 'z': raw_gyro_z}
+        }
 
     def read_data(self) -> Dict:
-        """
-        Read and process IMU data with orientation computation.
+        """Read and process all IMU data including velocity, orientation, and raw values."""
+        # Read raw sensor values
+        raw = self.get_raw_data()
 
-        Returns:
-            Dictionary containing:
-                - accel: {'x', 'y', 'z'} in m/s²
-                - gyro: {'x', 'y', 'z'} in rad/s
-                - orientation: {'roll', 'pitch', 'yaw'} in radians
-                - timestamp: Unix timestamp
-        """
-        # Read raw data
-        accel_raw, gyro_raw = self.read_raw_data()
+        # Read scaled accelerometer data (m/s²) and apply calibration
+        accel_data = self.sensor.get_accel_data()
+        accel_x = accel_data['x'] - self.accel_offset['x']
+        accel_y = accel_data['y'] - self.accel_offset['y']
+        accel_z = accel_data['z'] - self.accel_offset['z']
 
-        # Convert accelerometer to m/s²
-        accel_x = (accel_raw[0] / self.accel_scale) * 9.81
-        accel_y = (accel_raw[1] / self.accel_scale) * 9.81
-        accel_z = (accel_raw[2] / self.accel_scale) * 9.81
+        # Read gyroscope data (deg/s) and convert to rad/s
+        gyro_data = self.sensor.get_gyro_data()
+        gyro_x = (gyro_data['x'] - self.gyro_offset['x']) * (math.pi / 180.0)
+        gyro_y = (gyro_data['y'] - self.gyro_offset['y']) * (math.pi / 180.0)
+        gyro_z = (gyro_data['z'] - self.gyro_offset['z']) * (math.pi / 180.0)
 
-        # Convert gyroscope to rad/s (subtract bias)
-        gyro_x = ((gyro_raw[0] - self.gyro_offset['x']) / self.gyro_scale) * (math.pi / 180.0)
-        gyro_y = ((gyro_raw[1] - self.gyro_offset['y']) / self.gyro_scale) * (math.pi / 180.0)
-        gyro_z = ((gyro_raw[2] - self.gyro_offset['z']) / self.gyro_scale) * (math.pi / 180.0)
+        # Read temperature
+        temperature = self.sensor.get_temp()
 
-        # Compute orientation using complementary filter
-        self._update_orientation(accel_x, accel_y, accel_z, gyro_x, gyro_y, gyro_z)
+        # Update orientation using complementary filter (returns dt for velocity calc)
+        dt = self._update_orientation(accel_x, accel_y, accel_z, gyro_x, gyro_y, gyro_z)
 
-        # Return formatted data
+        # Update velocity with drift compensation
+        self._update_velocity(accel_x, accel_y, accel_z, dt)
+
         return {
-            'accel': {'x': accel_x, 'y': accel_y, 'z': accel_z},
-            'gyro': {'x': gyro_x, 'y': gyro_y, 'z': gyro_z},
-            'orientation': {
-                'roll': self.roll,
-                'pitch': self.pitch,
-                'yaw': self.yaw
-            },
-            'timestamp': time.time()
+            'accel': {'x': accel_x, 'y': accel_y, 'z': accel_z},  # m/s²
+            'gyro': {'x': gyro_x, 'y': gyro_y, 'z': gyro_z},      # rad/s (angular velocity)
+            'velocity': {'x': self.vx, 'y': self.vy, 'z': self.vz},  # m/s (linear velocity)
+            'orientation': {'roll': self.roll, 'pitch': self.pitch, 'yaw': self.yaw},  # radians
+            'raw_accel': raw['accel'],   # 16-bit signed integers
+            'raw_gyro': raw['gyro'],     # 16-bit signed integers
+            'temperature': temperature,   # °C
+            'timestamp': time.time()      # Unix timestamp
         }
 
     def _update_orientation(self, ax: float, ay: float, az: float,
                           gx: float, gy: float, gz: float):
-        """
-        Update orientation using complementary filter.
-
-        Combines accelerometer (stable but noisy) with gyroscope (smooth but drifts)
-        using weighted average: 98% gyro + 2% accel.
-
-        Note: Roll/pitch from accelerometer assume no linear acceleration (only gravity).
-        Yaw integrates from gyroscope only (no magnetometer for absolute heading).
-
-        Args:
-            ax, ay, az: Accelerometer in m/s²
-            gx, gy, gz: Gyroscope in rad/s
-        """
-        # Calculate time delta
+        """Update orientation using complementary filter (98% gyro + 2% accel). Returns dt."""
         current_time = time.time()
         dt = current_time - self.last_time
         self.last_time = current_time
 
         # Compute roll and pitch from accelerometer (gravity vector)
-        # Note: These are only valid when robot is not accelerating!
         accel_roll = math.atan2(ay, math.sqrt(ax*ax + az*az))
         accel_pitch = math.atan2(-ax, math.sqrt(ay*ay + az*az))
 
@@ -300,7 +192,7 @@ class MPU6050Reader:
         self.pitch += gy * dt
         self.yaw += gz * dt
 
-        # Complementary filter: 98% gyro (fast, drifts) + 2% accel (slow, stable)
+        # Complementary filter
         alpha = 0.98
         self.roll = alpha * self.roll + (1 - alpha) * accel_roll
         self.pitch = alpha * self.pitch + (1 - alpha) * accel_pitch
@@ -311,11 +203,134 @@ class MPU6050Reader:
         while self.yaw < -math.pi:
             self.yaw += 2 * math.pi
 
+        return dt
+
+    def _compute_rotation_matrix(self) -> tuple:
+        """
+        Compute rotation matrix from sensor frame to world frame.
+        Uses ZYX Euler angle convention (yaw-pitch-roll).
+
+        Returns:
+            tuple: 9 values (R00, R01, R02, R10, R11, R12, R20, R21, R22)
+        """
+        # Cache trig values for efficiency
+        cp, sp = math.cos(self.pitch), math.sin(self.pitch)
+        cr, sr = math.cos(self.roll), math.sin(self.roll)
+        cy, sy = math.cos(self.yaw), math.sin(self.yaw)
+
+        # Compute rotation matrix elements (ZYX convention)
+        R00 = cp * cy
+        R01 = sr * sp * cy - cr * sy
+        R02 = cr * sp * cy + sr * sy
+        R10 = cp * sy
+        R11 = sr * sp * sy + cr * cy
+        R12 = cr * sp * sy - sr * cy
+        R20 = -sp
+        R21 = sr * cp
+        R22 = cr * cp
+
+        return (R00, R01, R02, R10, R11, R12, R20, R21, R22)
+
+    def _remove_gravity(self, ax: float, ay: float, az: float) -> tuple:
+        """
+        Remove gravity from measured acceleration using current orientation.
+
+        The accelerometer measures total acceleration (linear + gravity).
+        This method subtracts the gravity component based on IMU orientation.
+
+        Args:
+            ax, ay, az: Measured acceleration in sensor frame (m/s²)
+
+        Returns:
+            tuple: (ax_linear, ay_linear, az_linear) in sensor frame (m/s²)
+        """
+        # Get rotation matrix
+        R00, R01, R02, R10, R11, R12, R20, R21, R22 = self._compute_rotation_matrix()
+
+        # Gravity in sensor frame = +9.81 * third column of R^T
+        gravity = 9.81
+        gx_sensor = gravity * R20  # = gravity * sin(pitch)
+        gy_sensor = gravity * R21  # = gravity * sin(roll) * cos(pitch)
+        gz_sensor = gravity * R22  # = gravity * cos(roll) * cos(pitch)
+
+        # Remove gravity component
+        ax_linear = ax - gx_sensor
+        ay_linear = ay - gy_sensor
+        az_linear = az - gz_sensor
+
+        return (ax_linear, ay_linear, az_linear)
+
+    def _transform_to_world_frame(self, ax: float, ay: float, az: float) -> tuple:
+        """
+        Transform acceleration from sensor frame to world frame.
+
+        Args:
+            ax, ay, az: Acceleration in sensor frame (m/s²)
+
+        Returns:
+            tuple: (ax_world, ay_world, az_world) in world frame (m/s²)
+        """
+        # Get rotation matrix
+        R00, R01, R02, R10, R11, R12, R20, R21, R22 = self._compute_rotation_matrix()
+
+        # Matrix-vector multiplication: a_world = R * a_sensor
+        ax_world = R00 * ax + R01 * ay + R02 * az
+        ay_world = R10 * ax + R11 * ay + R12 * az
+        az_world = R20 * ax + R21 * ay + R22 * az
+
+        return (ax_world, ay_world, az_world)
+
+    def _update_velocity(self, ax: float, ay: float, az: float, dt: float):
+        """
+        Update linear velocity with gravity compensation and world-frame integration.
+
+        Process:
+        1. Remove gravity from measured acceleration (sensor frame)
+        2. Transform linear acceleration to world frame
+        3. Integrate to get world-frame velocity
+        4. Apply zero-velocity update when stationary
+
+        Args:
+            ax, ay, az: Measured acceleration in sensor frame (m/s²)
+            dt: Time step (seconds)
+        """
+        # Step 1: Remove gravity component
+        ax_linear, ay_linear, az_linear = self._remove_gravity(ax, ay, az)
+
+        # Step 2: Transform to world frame
+        ax_world, ay_world, az_world = self._transform_to_world_frame(
+            ax_linear, ay_linear, az_linear
+        )
+
+        # Step 3: Integrate to get velocity (in world frame)
+        self.vx += ax_world * dt
+        self.vy += ay_world * dt
+        self.vz += az_world * dt
+
+        # Step 4: Drift compensation - Zero-velocity update when stationary
+        # Check if linear acceleration magnitude is small (near zero motion)
+        linear_accel_magnitude = math.sqrt(
+            ax_linear*ax_linear + ay_linear*ay_linear + az_linear*az_linear
+        )
+
+        # If linear acceleration is small, assume stationary
+        if linear_accel_magnitude < self.stationary_threshold:
+            # Apply velocity decay (gradual zeroing)
+            self.vx *= self.velocity_decay
+            self.vy *= self.velocity_decay
+            self.vz *= self.velocity_decay
+
+            # Hard zero if very small
+            if abs(self.vx) < 0.01:
+                self.vx = 0.0
+            if abs(self.vy) < 0.01:
+                self.vy = 0.0
+            if abs(self.vz) < 0.01:
+                self.vz = 0.0
+
     def close(self):
-        """Close I2C bus connection."""
-        if hasattr(self, 'bus'):
-            self.bus.close()
-            print("\n✓ IMU reader closed")
+        """Close connection."""
+        print("\n[OK] IMU reader closed")
 
 
 # ============================================================================
@@ -326,87 +341,34 @@ def main():
     """Main function for standalone testing."""
     import argparse
 
-    parser = argparse.ArgumentParser(
-        description='MPU6050 IMU Reader - Read accelerometer, gyroscope, and orientation data',
-        formatter_class=argparse.ArgumentDefaultsHelpFormatter
-    )
-    parser.add_argument('--bus', type=int, default=1,
-                       help='I2C bus number')
-    parser.add_argument('--address', type=lambda x: int(x, 0), default=0x68,
-                       help='I2C address (0x68 or 0x69)')
-    parser.add_argument('--rate', type=int, default=40,
-                       help='Sample rate in Hz')
-    parser.add_argument('--no-calibrate', action='store_true',
-                       help='Skip gyro calibration')
+    parser = argparse.ArgumentParser(description='MPU6050 IMU Reader')
+    parser.add_argument('--address', type=lambda x: int(x, 0), default=0x68)
+    parser.add_argument('--rate', type=int, default=40)
+    parser.add_argument('--no-calibrate', action='store_true')
     args = parser.parse_args()
 
-    print("=" * 80)
-    print("MPU6050 IMU READER")
-    print("=" * 80)
+    imu = MPU6050Reader(address=args.address, sample_rate=args.rate)
+    if not args.no_calibrate:
+        imu.calibrate()
+
+    print("\n--- Streaming IMU data (Ctrl+C to stop) ---\n")
 
     try:
-        # Initialize reader
-        imu = MPU6050Reader(
-            bus=args.bus,
-            address=args.address,
-            sample_rate=args.rate
-        )
-
-        # Calibrate if requested
-        if not args.no_calibrate:
-            imu.calibrate()
-
-        print("\n" + "=" * 80)
-        print("STREAMING DATA (Ctrl+C to stop)")
-        print("=" * 80)
-        print()
-
-        # Main loop
-        loop_count = 0
-        start_time = time.time()
-
         while True:
             loop_start = time.time()
-
-            # Read data
             data = imu.read_data()
 
-            # Print every 10 samples (4 Hz display rate)
-            if loop_count % 10 == 0:
-                print(f"Accel (m/s²): X={data['accel']['x']:7.3f}  "
-                      f"Y={data['accel']['y']:7.3f}  Z={data['accel']['z']:7.3f}  | "
-                      f"Gyro (rad/s): X={data['gyro']['x']:7.3f}  "
-                      f"Y={data['gyro']['y']:7.3f}  Z={data['gyro']['z']:7.3f}  | "
-                      f"Orient (deg): Roll={math.degrees(data['orientation']['roll']):6.1f}  "
-                      f"Pitch={math.degrees(data['orientation']['pitch']):6.1f}  "
-                      f"Yaw={math.degrees(data['orientation']['yaw']):6.1f}")
+            print(f"Vel: [{data['velocity']['x']:6.2f}, {data['velocity']['y']:6.2f}, {data['velocity']['z']:6.2f}] m/s | "
+                  f"Gyro: [{data['gyro']['x']:6.3f}, {data['gyro']['y']:6.3f}, {data['gyro']['z']:6.3f}] rad/s | "
+                  f"Temp: {data['temperature']:5.1f}°C")
 
-            loop_count += 1
-
-            # Maintain sample rate
             elapsed = time.time() - loop_start
             sleep_time = imu.dt - elapsed
             if sleep_time > 0:
                 time.sleep(sleep_time)
 
     except KeyboardInterrupt:
-        print("\n\n" + "=" * 80)
-        print("STOPPED BY USER")
-        print("=" * 80)
-
-        # Print statistics
-        total_time = time.time() - start_time
-        actual_rate = loop_count / total_time if total_time > 0 else 0
-        print(f"\nStatistics:")
-        print(f"  Total samples: {loop_count}")
-        print(f"  Total time: {total_time:.2f}s")
-        print(f"  Average rate: {actual_rate:.1f} Hz (target: {args.rate} Hz)")
-
-    except Exception as e:
-        print(f"\nERROR: {e}")
-        import traceback
-        traceback.print_exc()
-
+        print("\n--- Stopped ---")
     finally:
         imu.close()
 
