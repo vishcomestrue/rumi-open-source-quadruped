@@ -34,7 +34,7 @@ import argparse
 from mx64_controller import MX64Controller
 
 
-def run_sitstand(control_freq=5.0, step_size=30, target_offset=500):
+def run_sitstand(control_freq=5.0, step_size=30, target_offset=500, repeat=1):
     """
     Run basic sit-stand motion.
 
@@ -42,6 +42,7 @@ def run_sitstand(control_freq=5.0, step_size=30, target_offset=500):
         control_freq: Control loop frequency in Hz (default: 5 Hz)
         step_size: Position step size in raw units (default: 30)
         target_offset: Target offset for sit position (default: 500)
+        repeat: Number of times to repeat the sit-stand cycle (default: 1)
     """
     print("\n" + "=" * 60)
     print("   Basic Sit-Stand Motion Test")
@@ -50,6 +51,7 @@ def run_sitstand(control_freq=5.0, step_size=30, target_offset=500):
     print(f"  Control frequency: {control_freq} Hz ({1000/control_freq:.1f} ms period)")
     print(f"  Step size: {step_size} raw units")
     print(f"  Target: Motors 9,12 -> +{target_offset}r | Motors 3,6 -> -{target_offset}r")
+    print(f"  Repeat: {repeat} cycle(s)")
     print("=" * 60)
 
     controller = MX64Controller()
@@ -79,6 +81,15 @@ def run_sitstand(control_freq=5.0, step_size=30, target_offset=500):
 
     all_motor_ids = sorted(motors.keys())
     print(f"\nFound {len(all_motor_ids)} motor(s): {all_motor_ids}")
+
+    # Check if all 12 motors are present
+    if len(all_motor_ids) != 12:
+        print(f"\n[WARNING] Expected 12 motors, but found {len(all_motor_ids)}.")
+        response = input("Continue anyway? (y/N): ").strip().lower()
+        if response != 'y':
+            print("[INFO] Exiting as requested.")
+            controller.disconnect()
+            return
 
     # Filter to motors with IDs that are multiples of 3
     target_motor_ids = [mid for mid in all_motor_ids if mid % 3 == 0]
@@ -157,6 +168,7 @@ def run_sitstand(control_freq=5.0, step_size=30, target_offset=500):
     print("Sequence: STAND -> SIT -> STAND")
     print(f"Frequency: {control_freq} Hz")
     print(f"Step size: {step_size} raw units per cycle")
+    print(f"Repeats: {repeat}")
     print("\nPress Ctrl+C to stop at any time")
     print("-" * 40)
 
@@ -164,82 +176,93 @@ def run_sitstand(control_freq=5.0, step_size=30, target_offset=500):
     current_offset = 0  # Start at reference (standing)
 
     try:
-        # Phase 1: STAND -> SIT (go to +target_offset for group B)
-        print("\n[PHASE 1] Moving to SIT position...")
-        print(f"  Motors 9, 12: 0r -> +{target_offset}r")
-        print(f"  Motors 3, 6:  0r -> -{target_offset}r")
+        for cycle in range(1, repeat + 1):
+            if repeat > 1:
+                print(f"\n{'=' * 40}")
+                print(f"  CYCLE {cycle} of {repeat}")
+                print(f"{'=' * 40}")
 
-        while current_offset < target_offset:
-            loop_start = time.time()
+            # Phase 1: STAND -> SIT (go to +target_offset for group B)
+            print("\n[PHASE 1] Moving to SIT position...")
+            print(f"  Motors 9, 12: 0r -> +{target_offset}r")
+            print(f"  Motors 3, 6:  0r -> -{target_offset}r")
 
-            current_offset = min(current_offset + step_size, target_offset)
+            while current_offset < target_offset:
+                loop_start = time.time()
 
-            # Build target positions
-            target_positions = {}
-            for mid in all_motor_ids:
-                if mid in group_a:
-                    target_positions[mid] = reference_positions[mid] - current_offset
-                elif mid in group_b:
-                    target_positions[mid] = reference_positions[mid] + current_offset
-                else:
-                    target_positions[mid] = reference_positions[mid]
+                current_offset = min(current_offset + step_size, target_offset)
 
-            if not controller.sync_write_positions(target_positions):
-                print("\n[ERROR] Failed to write positions")
-                break
+                # Build target positions
+                target_positions = {}
+                for mid in all_motor_ids:
+                    if mid in group_a:
+                        target_positions[mid] = reference_positions[mid] - current_offset
+                    elif mid in group_b:
+                        target_positions[mid] = reference_positions[mid] + current_offset
+                    else:
+                        target_positions[mid] = reference_positions[mid]
 
-            # Status update
-            print(f"\r  Offset: {current_offset:4d}r / {target_offset}r", end="", flush=True)
+                if not controller.sync_write_positions(target_positions):
+                    print("\n[ERROR] Failed to write positions")
+                    break
 
-            # Maintain frequency
-            elapsed = time.time() - loop_start
-            sleep_time = target_period - elapsed
-            if sleep_time > 0:
-                time.sleep(sleep_time)
+                # Status update
+                print(f"\r  Offset: {current_offset:4d}r / {target_offset}r", end="", flush=True)
 
-        print(f"\r  Offset: {current_offset:4d}r / {target_offset}r - DONE")
+                # Maintain frequency
+                elapsed = time.time() - loop_start
+                sleep_time = target_period - elapsed
+                if sleep_time > 0:
+                    time.sleep(sleep_time)
 
-        # Hold at sit position briefly
-        print("\n[HOLD] At SIT position for 1 second...")
-        time.sleep(1.0)
+            print(f"\r  Offset: {current_offset:4d}r / {target_offset}r - DONE")
 
-        # Phase 2: SIT -> STAND (return to reference)
-        print("\n[PHASE 2] Moving to STAND position...")
-        print(f"  Motors 9, 12: +{target_offset}r -> 0r")
-        print(f"  Motors 3, 6:  -{target_offset}r -> 0r")
+            # Hold at sit position briefly
+            print("\n[HOLD] At SIT position for 1 second...")
+            time.sleep(1.0)
 
-        while current_offset > 0:
-            loop_start = time.time()
+            # Phase 2: SIT -> STAND (return to reference)
+            print("\n[PHASE 2] Moving to STAND position...")
+            print(f"  Motors 9, 12: +{target_offset}r -> 0r")
+            print(f"  Motors 3, 6:  -{target_offset}r -> 0r")
 
-            current_offset = max(current_offset - step_size, 0)
+            while current_offset > 0:
+                loop_start = time.time()
 
-            # Build target positions
-            target_positions = {}
-            for mid in all_motor_ids:
-                if mid in group_a:
-                    target_positions[mid] = reference_positions[mid] - current_offset
-                elif mid in group_b:
-                    target_positions[mid] = reference_positions[mid] + current_offset
-                else:
-                    target_positions[mid] = reference_positions[mid]
+                current_offset = max(current_offset - step_size, 0)
 
-            if not controller.sync_write_positions(target_positions):
-                print("\n[ERROR] Failed to write positions")
-                break
+                # Build target positions
+                target_positions = {}
+                for mid in all_motor_ids:
+                    if mid in group_a:
+                        target_positions[mid] = reference_positions[mid] - current_offset
+                    elif mid in group_b:
+                        target_positions[mid] = reference_positions[mid] + current_offset
+                    else:
+                        target_positions[mid] = reference_positions[mid]
 
-            # Status update
-            print(f"\r  Offset: {current_offset:4d}r / 0r", end="", flush=True)
+                if not controller.sync_write_positions(target_positions):
+                    print("\n[ERROR] Failed to write positions")
+                    break
 
-            # Maintain frequency
-            elapsed = time.time() - loop_start
-            sleep_time = target_period - elapsed
-            if sleep_time > 0:
-                time.sleep(sleep_time)
+                # Status update
+                print(f"\r  Offset: {current_offset:4d}r / 0r", end="", flush=True)
 
-        print(f"\r  Offset: {current_offset:4d}r / 0r - DONE")
+                # Maintain frequency
+                elapsed = time.time() - loop_start
+                sleep_time = target_period - elapsed
+                if sleep_time > 0:
+                    time.sleep(sleep_time)
+
+            print(f"\r  Offset: {current_offset:4d}r / 0r - DONE")
+
+            # Hold at stand position briefly between cycles (except last)
+            if cycle < repeat:
+                print("\n[HOLD] At STAND position for 1 second...")
+                time.sleep(1.0)
 
         print("\n" + "=" * 60)
-        print("[COMPLETE] Sit-Stand sequence finished!")
+        print(f"[COMPLETE] Sit-Stand sequence finished! ({repeat} cycle(s))")
         print("=" * 60)
 
     except KeyboardInterrupt:
@@ -262,7 +285,7 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  # Default: 5 Hz, step 30, target 500r
+  # Default: 5 Hz, step 30, target 500r, 1 cycle
   uv run python basic_sitstand.py
 
   # Faster movement (10 Hz)
@@ -274,8 +297,11 @@ Examples:
   # Different target offset
   uv run python basic_sitstand.py -t 400
 
+  # Repeat 5 times
+  uv run python basic_sitstand.py -r 5
+
 Motion:
-  STAND (reference) -> SIT (+500r for 9,12 / -500r for 3,6) -> STAND
+  STAND (reference) -> SIT (+500r for 9,12 / -500r for 3,6) -> STAND (repeat x times)
         """
     )
 
@@ -300,6 +326,13 @@ Motion:
         help="Target offset for sit position in raw units (default: 500)"
     )
 
+    parser.add_argument(
+        "-r", "--repeat",
+        type=int,
+        default=1,
+        help="Number of times to repeat the sit-stand cycle (default: 1)"
+    )
+
     args = parser.parse_args()
 
     # Validate arguments
@@ -315,10 +348,15 @@ Motion:
         print("[ERROR] Target offset must be positive")
         sys.exit(1)
 
+    if args.repeat <= 0:
+        print("[ERROR] Repeat count must be positive")
+        sys.exit(1)
+
     run_sitstand(
         control_freq=args.freq,
         step_size=args.step,
-        target_offset=args.target
+        target_offset=args.target,
+        repeat=args.repeat
     )
 
 
