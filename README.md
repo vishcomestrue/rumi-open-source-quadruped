@@ -1,8 +1,10 @@
 # Rumi - Open Source Quadruped Robot
 
-Rumi is an open-source quadruped robot project built with Dynamixel servo motors. This repository contains the control software and examples for operating the robot.
+![Rumi Quadruped Robot](./assets/rumi.jpg)
 
 ## Overview
+
+Rumi is an open-source quadruped robot project built with Dynamixel servo motors. This repository contains the control software and examples for operating the robot.
 
 Rumi is designed to be an accessible platform for robotics research and education. The project uses ROBOTIS Dynamixel motors for precise control and provides Python-based interfaces for motor control and coordination.
 
@@ -80,10 +82,16 @@ See the [allmotortest README](./allmotortest/README.md) for more details on moto
 rumi/
 ├── allmotortest/          # Multi-motor control examples
 │   ├── multi_motor_controller.py
-│   ├── mx_64.md          # MX-64 motor documentation
+│   ├── mx_64.md           # MX-64 motor documentation
 │   └── README.md
-├── policy/               # Control policies (coming soon)
-├── sim2real/            # Simulation to real transfer (coming soon)
+├── motortest/             # Motor testing and control utilities
+│   ├── all_motor_control.py
+│   ├── basic_sitstand.py
+│   ├── mx64_controller.py
+│   ├── test_motors.py
+│   └── README.md
+├── policy/                # Control policies (coming soon)
+├── sim2real/              # Simulation to real transfer (coming soon)
 └── README.md
 ```
 
