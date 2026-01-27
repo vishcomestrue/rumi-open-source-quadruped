@@ -212,7 +212,7 @@ class MX64Controller:
     DEFAULT_PORTS = ['/dev/ttyUSB0', '/dev/ttyUSB1']
 
     # Default baud rates to try
-    DEFAULT_BAUDRATES = [2000000, 1000000, 57600, 115200]
+    DEFAULT_BAUDRATES = [4000000, 2000000, 1000000, 57600, 115200]
 
     def __init__(self, port=None, baudrate=None, motor_id=1, auto_connect=False):
         """
