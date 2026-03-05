@@ -1,0 +1,35 @@
+<mujoco model="quad scene">
+  <include file="rumi.xml"/>
+
+  <statistic center="0 0 0.1" extent="0.8" meansize="0.04"/>
+
+  <visual>
+    <headlight diffuse=".8 .8 .8" ambient=".2 .2 .2" specular="1 1 1"/>
+    <rgba force="1 0 0 1"/>
+    <global azimuth="120" elevation="-20"/>
+    <map force="0.01"/>
+    <scale forcewidth="0.3" contactwidth="0.5" contactheight="0.2"/>
+    <quality shadowsize="8192"/>
+  </visual>
+
+  <asset>
+    <texture type="skybox" builtin="gradient" rgb1="1 1 1" rgb2="1 1 1" width="800" height="800"/>
+    <texture type="2d" name="groundplane" builtin="checker" mark="edge" rgb1="1 1 1" rgb2="1 1 1" markrgb="0 0 0" width="300" height="300"/>
+    <material name="groundplane" texture="groundplane" texuniform="true" texrepeat="5 5" reflectance="0"/>
+  </asset>
+
+  <worldbody>
+    <geom name="floor" size="0 0 0.01" type="plane" material="groundplane" priority="1" friction="0.6" condim="3" contype="1" conaffinity="0"/>
+  </worldbody>
+
+  <keyframe>
+  
+    <key name="zero" qpos="0 0 0.04 1 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0" ctrl="0 0 0 0 0 0 0 0 0 0 0 0"/>
+    <key name="real_sitting" qpos="0 0 0.04 0 1 0 0 0 0 -1.2793 0 0 1.2931 0 0 -1.1628 0 0 1.1137" ctrl="0 0 -1.2793 0 0 1.2931 0 0 -1.1628 0 0 1.1137"/>
+    <key name="stand_full" qpos="0.00210009 -0.00113166 0.242451 0.99972 -0.00047952 0.00175363 0.0235741 0.0 -0.4 -1.2 0.0 0.4 1.2 0.0 -0.4 -1.2 0.0 0.4 1.2" ctrl="0 -0.4 -1.2 0 0.4 1.2 0 -0.4 -1.2 0 0.4 1.2" />
+    <key name="stand_full_old" qpos="0.0 0.0 0.226207 1.0 0.0 0.0 0.0 -0.00055681 -0.29 -0.644969 -0.000992173 0.289978 0.643715 0.00827629 -0.289931 -0.619339 0.00777279 0.289948 0.618087" ctrl="0 -0.28 -0.66 0 0.28 0.66 0 -0.28 -0.66 0 0.28 0.66"/>
+    <key name="stand_full_v2" qpos="0.0 0.0 0.226207 1.0 0.0 0.0 0.0 -0.00055681 -0.29 -0.644969 -0.000992173 0.289978 0.643715 0.00827629 -0.289931 -0.619339 0.00777279 0.289948 0.618087" ctrl="0.1 0 -0.66 0.1 0.28 0.66 0.1 -0.28 -0.66 0.1 0.28 0.66"/>
+    
+  </keyframe>
+
+</mujoco>
