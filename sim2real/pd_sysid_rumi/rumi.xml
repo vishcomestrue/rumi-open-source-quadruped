@@ -13,13 +13,7 @@
       <!-- Joint damping and armature provide numerical stability -->
       <!-- <joint pos="0 0 0" axis="0 1 0" damping="0.5" armature="0.005"/> -->
       <!-- The below values are obtained from the BAM repo -->
-      <!-- <joint pos="0 0 0" axis="0 1 0" armature="0.12" damping="0.66" frictionloss="0.09"/> -->
-      <!-- Result of sysid with Kp=10  -->
-      <!-- <joint pos="0 0 0" axis="0 1 0" armature="0.025" damping="0.70" frictionloss="0.023"/> -->
-      <!-- Result of sysid with Kp=2.5 -->
-      <!-- <joint pos="0 0 0" axis="0 1 0" armature="0.007" damping="0.25" frictionloss="0.000032"/> -->
-      <!-- Result of sysid with Kp=2.5 and then fine tuning with Kp=10 -->
-      <joint pos="0 0 0" axis="0 1 0" armature="0.031" damping="0.794" frictionloss="0.008453"/>
+      <joint pos="0 0 0" axis="0 1 0" armature="0.012" damping="0.66" frictionloss="0.09"/>
       <!-- kp: position gain, kv: velocity gain (derivative damping), forcerange: actuator limits -->
       <position inheritrange="1" kp="6.0" kv="0" forcerange="-6.0 6.0"/>
       <!-- Joint ranges and constants for section of legs -->
@@ -31,7 +25,6 @@
       </default>
       <default class="calf">
         <joint axis="0 1 0"/>
-        <!-- <joint axis="0 1 0" armature="0.193" damping="0.72" frictionloss="0.00001"/> -->
       </default>
       <!-- Visual Meshes -->
       <default class="visual">
