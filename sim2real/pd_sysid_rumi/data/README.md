@@ -33,6 +33,40 @@ Simulation parameters for armature damping and friction loss are initialized fro
 
 ---
 
+## NPZ File Contents
+
+Each `.npz` file contains the following arrays:
+
+| Key | Shape | Description |
+|-----|-------|-------------|
+| `t` | (N,) | Wall-clock time (s) |
+| `target` | (N, 12) | Commanded joint positions (rad, offset-space) |
+| `q_real` | (N, 12) | Measured joint positions (rad, offset-space) |
+| `dq_real` | (N, 12) | Measured joint velocities (rad/s) |
+| `tau_meas` | (N, 12) | Measured joint torques (N·m) |
+| `q_sim` | (N, 12) | Simulated joint positions (rad) |
+| `dq_sim` | (N, 12) | Simulated joint velocities (rad/s) |
+| `control_hz` | (1,) | Control loop frequency (Hz) |
+| `joint_names` | (12,) | Joint name strings |
+| `kp_sim` | (1,) | Kp gain used in simulation |
+| `kd_sim` | (1,) | Kd gain used in simulation |
+| `kp_real` | (1,) | Kp gain used on real robot |
+| `kd_real` | (1,) | Kd gain used on real robot |
+| `signal_mode` | (1,) | Signal type string (e.g. `sine`, `standup`) |
+| `hip_centre_deg` | (1,) | Hip joint center position (deg) |
+| `thigh_centre_deg` | (1,) | Thigh joint center position (deg) |
+| `calf_centre_deg` | (1,) | Calf joint center position (deg) |
+| `hip_swing_deg` | (1,) | Hip joint swing amplitude (deg) |
+| `thigh_swing_deg` | (1,) | Thigh joint swing amplitude (deg) |
+| `calf_swing_deg` | (1,) | Calf joint swing amplitude (deg) |
+| `frequency_hz` | (1,) | Sine signal frequency (Hz) |
+| `step_period_s` | (1,) | Step signal period (s) |
+| `chirp_f1_hz` | (1,) | Chirp start frequency (Hz) |
+| `chirp_sweep_s` | (1,) | Chirp sweep duration (s) |
+| `standup_duration_s` | (1,) | Standup interpolation duration (s) |
+
+---
+
 ## Dataset Index
 
 ### Standup (Smooth Interpolation) Signals — Calf Joint
