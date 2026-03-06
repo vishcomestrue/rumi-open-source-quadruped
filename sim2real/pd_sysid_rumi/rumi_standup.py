@@ -839,10 +839,11 @@ def main() -> None:
 
             # Snapshot shared arrays (offset-space for real)
             now        = t_wall - _t0
-            q_real_off = q_real_np.copy() - ip_np   # offset from init
-            q_sim_now  = q_sim_np.copy()
-            dq_real_now= dq_real_np.copy()
-            tau_now    = tau_np.copy()
+            q_real_off  = q_real_np.copy() - ip_np   # offset from init
+            q_sim_now   = q_sim_np.copy()
+            dq_sim_now  = dq_sim_np.copy()
+            dq_real_now = dq_real_np.copy()
+            tau_now     = tau_np.copy()
 
             # Accumulate per-group, per-joint plot buffers
             _t_buf.append(now)
@@ -867,7 +868,7 @@ def main() -> None:
                         _rec_dq_real.append(dq_real_now.copy())
                         _rec_tau.append(tau_now.copy())
                         _rec_q_sim.append(q_sim_now.copy())
-                        _rec_dq_sim.append(dq_sim_np.copy())
+                        _rec_dq_sim.append(dq_sim_now.copy())
                         txt_rec.value = f"Recording… {len(_rec_t)} pts"
 
             # Plot refresh
