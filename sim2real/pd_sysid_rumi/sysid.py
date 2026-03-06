@@ -103,8 +103,8 @@ def loss(
     armature, damping, frictionloss = np.exp(theta)
     q_sim, dq_sim = replay(targets, q0, control_hz, joint_name,
                            armature, damping, frictionloss)
-    pos_loss = float(np.mean((q_sim  - q_real)  ** 2))
-    vel_loss = float(np.mean((dq_sim - dq_real) ** 2))
+    pos_loss = float(np.sqrt(np.mean((q_sim  - q_real)  ** 2)))
+    vel_loss = float(np.sqrt(np.mean((dq_sim - dq_real) ** 2)))
     return pos_loss + vel_weight * vel_loss
 
 
@@ -153,19 +153,19 @@ def main() -> None:
           f"duration={t[-1]:.1f}s  q0={np.rad2deg(q0):.1f}°")
 
     # ── Velocity weight ────────────────────────────────────────────────────────
-    var_q  = float(np.var(q_real))
-    var_dq = float(np.var(dq_real))
+    std_q  = float(np.std(q_real))
+    std_dq = float(np.std(dq_real))
     if args.vel_weight is not None:
         vel_weight = args.vel_weight
         print(f"vel_weight (manual) = {vel_weight:.6f}")
     else:
-        vel_weight = var_q / var_dq if var_dq > 1e-12 else 0.0
+        vel_weight = std_q / std_dq if std_dq > 1e-12 else 0.0
         print(f"vel_weight (auto)   = {vel_weight:.6f}  "
-              f"[var_q={var_q:.4f}  var_dq={var_dq:.4f}]")
+              f"[std_q={std_q:.4f}  std_dq={std_dq:.4f}]")
 
     # ── Initial guess (rumi.xml defaults) ─────────────────────────────────────
-    # armature=0.12, damping=0.66, frictionloss=0.09
-    theta0 = np.log([0.12, 0.66, 0.09])
+    # armature=0.012, damping=0.66, frictionloss=0.09
+    theta0 = np.log([0.012, 0.66, 0.09])
 
     # ── CMA-ES ─────────────────────────────────────────────────────────────────
     es = cma.CMAEvolutionStrategy(
@@ -212,7 +212,7 @@ def main() -> None:
     q_sim_best, dq_sim_best = replay(targets, q0, control_hz, joint_name,
                                      armature, damping, frictionloss)
     q_sim_init, dq_sim_init = replay(targets, q0, control_hz, joint_name,
-                                     0.12, 0.66, 0.09)
+                                     0.012, 0.66, 0.09)
 
     # ── Plot ───────────────────────────────────────────────────────────────────
     fig, axes = plt.subplots(4, 1, figsize=(13, 11), sharex=True)

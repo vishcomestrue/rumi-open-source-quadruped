@@ -24,9 +24,9 @@ _SCENE_XML = _HERE / "scene.xml"
 PHYSICS_DT = 0.004
 
 # XML defaults (rumi.xml)
-_XML_ARMATURE    = 0.031
-_XML_DAMPING     = 0.794
-_XML_FRICTION    = 0.008453
+_XML_ARMATURE    = 0.012
+_XML_DAMPING     = 0.66
+_XML_FRICTION    = 0.09
 
 
 # ── MuJoCo helpers ─────────────────────────────────────────────────────────────
@@ -41,17 +41,22 @@ def _get_joint_ids(m: mujoco.MjModel, joint_name: str) -> tuple[int, int, int]:
     raise ValueError(f"No actuator for joint '{joint_name}'")
 
 
+def _joint_part(name: str) -> str:
+    return name.split("_")[1]   # "hip" | "thigh" | "calf"
+
+
 def _apply_params(
     m: mujoco.MjModel,
-    joint_name: str,
+    joint_names: list[str],
     armature: float,
     damping: float,
     frictionloss: float,
 ) -> None:
-    dof_id = m.jnt_dofadr[m.joint(joint_name).id]
-    m.dof_armature[dof_id]     = armature
-    m.dof_damping[dof_id]      = damping
-    m.dof_frictionloss[dof_id] = frictionloss
+    for jname in joint_names:
+        dof_id = m.jnt_dofadr[m.joint(jname).id]
+        m.dof_armature[dof_id]     = armature
+        m.dof_damping[dof_id]      = damping
+        m.dof_frictionloss[dof_id] = frictionloss
 
 
 # ── Simulation replay ───────────────────────────────────────────────────────────
@@ -61,15 +66,18 @@ def replay(
     q0:           np.ndarray,   # (12,)
     control_hz:   int,
     joint_names:  list[str],    # all 12
-    sel_joint:    str,          # single joint to apply params to
+    sel_joint:    str,          # selected joint — all joints of same part get params
     armature:     float,
     damping:      float,
     frictionloss: float,
 ) -> tuple[np.ndarray, np.ndarray]:
-    """Replay full 12-joint sequence; only sel_joint gets candidate params."""
+    """Replay full 12-joint sequence; all joints of the same part get candidate params."""
+    part = _joint_part(sel_joint)
+    same_part = [jn for jn in joint_names if _joint_part(jn) == part]
+
     m = mujoco.MjModel.from_xml_path(str(_SCENE_XML))
     m.opt.timestep = PHYSICS_DT
-    _apply_params(m, sel_joint, armature, damping, frictionloss)
+    _apply_params(m, same_part, armature, damping, frictionloss)
 
     d   = mujoco.MjData(m)
     ids = [_get_joint_ids(m, jn) for jn in joint_names]
@@ -220,15 +228,17 @@ def main() -> None:
         fric     = float(sl_fric.value)
         j_col    = joint_names.index(jname)
 
-        status_md.content = f"*Running replay for **{jname}** …*"
+        part = _joint_part(jname)
+        same_part = [jn for jn in joint_names if _joint_part(jn) == part]
+        status_md.content = f"*Running replay for **{jname}** (params applied to all {part}: {same_part}) …*"
 
         q_sim, dq_sim = replay(
             targets, q0, control_hz, joint_names, jname,
             arm, damp, fric,
         )
 
-        pos_loss = float(np.mean((q_sim[:, j_col] - q_real[:, j_col]) ** 2))
-        vel_loss = float(np.mean((dq_sim[:, j_col] - dq_real[:, j_col]) ** 2))
+        pos_loss = float(np.sqrt(np.mean((q_sim[:, j_col] - q_real[:, j_col]) ** 2)))
+        vel_loss = float(np.sqrt(np.mean((dq_sim[:, j_col] - dq_real[:, j_col]) ** 2)))
 
         # Update plots
         plot_pos.data = (
@@ -247,13 +257,12 @@ def main() -> None:
             np.rad2deg(dq_real[:, j_col]),
         )
 
-        pos_rms_deg = float(np.sqrt(pos_loss) * 180.0 / np.pi)
-        vel_rms_deg = float(np.sqrt(vel_loss) * 180.0 / np.pi)
+        pos_rms_deg = float(pos_loss * 180.0 / np.pi)
+        vel_rms_deg = float(vel_loss * 180.0 / np.pi)
         status_md.content = (
-            f"**{jname}**  "
+            f"**{jname}** (all {part})  "
             f"armature={arm:.4f}  damping={damp:.4f}  frictionloss={fric:.5f}  \n"
-            f"pos RMS={pos_rms_deg:.2f}°  vel RMS={vel_rms_deg:.2f}°/s  "
-            f"*(MSE: pos={pos_loss:.6f} rad²  vel={vel_loss:.6f} rad²/s²)*"
+            f"pos RMSE={pos_rms_deg:.2f}°  vel RMSE={vel_rms_deg:.2f}°/s"
         )
 
         with _lock:

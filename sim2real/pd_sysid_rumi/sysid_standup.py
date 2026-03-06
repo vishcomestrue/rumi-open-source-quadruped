@@ -140,8 +140,8 @@ def loss(
         armature, damping, frictionloss,
     )
     # Loss only over selected joints
-    pos_loss = float(np.mean((q_sim[:, sel_cols] - q_real[:, sel_cols]) ** 2))
-    vel_loss = float(np.mean((dq_sim[:, sel_cols] - dq_real[:, sel_cols]) ** 2))
+    pos_loss = float(np.sqrt(np.mean((q_sim[:, sel_cols] - q_real[:, sel_cols]) ** 2)))
+    vel_loss = float(np.sqrt(np.mean((dq_sim[:, sel_cols] - dq_real[:, sel_cols]) ** 2)))
     return pos_loss + vel_weight * vel_loss
 
 
@@ -219,18 +219,18 @@ def main() -> None:
     q0 = q_real[0].copy()   # (12,) — close to zero
 
     # ── Velocity weight ─────────────────────────────────────────────────────────
-    var_q  = float(np.var(q_real[:, sel_cols]))
-    var_dq = float(np.var(dq_real[:, sel_cols]))
+    std_q  = float(np.std(q_real[:, sel_cols]))
+    std_dq = float(np.std(dq_real[:, sel_cols]))
     if args.vel_weight is not None:
         vel_weight = args.vel_weight
         print(f"vel_weight (manual) = {vel_weight:.6f}")
     else:
-        vel_weight = var_q / var_dq if var_dq > 1e-12 else 0.0
+        vel_weight = std_q / std_dq if std_dq > 1e-12 else 0.0
         print(f"vel_weight (auto)   = {vel_weight:.6f}  "
-              f"[var_q={var_q:.4f}  var_dq={var_dq:.4f}]")
+              f"[std_q={std_q:.4f}  std_dq={std_dq:.4f}]")
 
     # ── Initial guess — taken directly from rumi.xml defaults ──────────────────
-    _INIT = [0.24, 0.88, 0.01]
+    _INIT = [0.012, 0.66, 0.09]
     theta0 = np.log(_INIT)
     loss0  = loss(theta0, targets, q_real, dq_real, q0,
                   control_hz, joint_names, sel_names, sel_cols, vel_weight)
@@ -285,7 +285,7 @@ def main() -> None:
     )
     q_sim_init, dq_sim_init = replay_all(
         targets, q0, control_hz, joint_names, sel_names,
-        0.031, 0.794, 0.008453,
+        0.012, 0.66, 0.09,
     )
 
     # ── Plot — one column per selected joint ────────────────────────────────────
