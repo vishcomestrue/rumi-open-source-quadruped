@@ -244,6 +244,8 @@ def real_process_fn(
     gsw = GroupSyncWrite(port, ph, ADDR_GOAL_POSITION, LEN_GOAL_POSITION)
 
     def _write_all(target_signal: float) -> None:
+        if not np.isfinite(target_signal):
+            target_signal = 0.0
         gsw.clearParam()
         for mid in all_motor_ids:
             if mid in group_motor_ids:
