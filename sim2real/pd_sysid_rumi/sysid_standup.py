@@ -152,11 +152,16 @@ def main() -> None:
         description="Rumi standup sysid — fits shared MX-64 params via CMA-ES."
     )
     parser.add_argument("recording", type=Path, help="Path to standup .npz recording.")
-    parser.add_argument("--calf",  action="store_true", help="Fit calf  joints.")
-    parser.add_argument("--thigh", action="store_true", help="Fit thigh joints.")
-    parser.add_argument("--hip",   action="store_true", help="Fit hip   joints.")
-    parser.add_argument("--joint", action="append", default=[], metavar="JOINT_NAME",
-                        help="Fit a specific joint by full name (e.g. BL_calf_joint). Repeatable.")
+    # ── Joint selection flags ──────────────────────────────────────────────────
+    parser.add_argument("--calf",        action="store_true", help="Fit all 4 calf joints.")
+    parser.add_argument("--calf-front",  action="store_true", help="Fit FL+FR calf joints.")
+    parser.add_argument("--calf-back",   action="store_true", help="Fit BL+BR calf joints.")
+    parser.add_argument("--thigh",       action="store_true", help="Fit all 4 thigh joints.")
+    parser.add_argument("--thigh-front", action="store_true", help="Fit FL+FR thigh joints.")
+    parser.add_argument("--thigh-back",  action="store_true", help="Fit BL+BR thigh joints.")
+    parser.add_argument("--hip",         action="store_true", help="Fit all 4 hip joints.")
+    parser.add_argument("--hip-front",   action="store_true", help="Fit FL+FR hip joints.")
+    parser.add_argument("--hip-back",    action="store_true", help="Fit BL+BR hip joints.")
     parser.add_argument("--popsize",    type=int,   default=12)
     parser.add_argument("--max-iter",   type=int,   default=300)
     parser.add_argument("--sigma0",     type=float, default=0.5,
@@ -183,36 +188,43 @@ def main() -> None:
     print(f"Joints: {joint_names}")
 
     # ── Select joints to fit ────────────────────────────────────────────────────
-    fit_parts: set[str] = set()
-    if args.calf:  fit_parts.add("calf")
-    if args.thigh: fit_parts.add("thigh")
-    if args.hip:   fit_parts.add("hip")
+    _FRONT = {"FL", "FR"}
+    _BACK  = {"BL", "BR"}
 
-    # Validate any explicitly named joints
-    for jn in args.joint:
-        if jn not in joint_names:
-            parser.error(f"--joint '{jn}' not found in recording. "
-                         f"Available: {joint_names}")
+    # Validate: --calf-front + --calf-back must use --calf instead
+    for part in ("calf", "thigh", "hip"):
+        if getattr(args, f"{part}_front") and getattr(args, f"{part}_back"):
+            parser.error(f"--{part}-front + --{part}-back is not allowed; use --{part} instead.")
 
-    # Build selected column set: part-based union individual joints
-    sel_set = set()
-    if fit_parts:
-        sel_set |= {i for i, n in enumerate(joint_names) if _joint_part(n) in fit_parts}
-    for jn in args.joint:
-        sel_set.add(joint_names.index(jn))
+    # Build selected joint set and tag
+    sel_set:  set[int] = set()
+    tag_parts: list[str] = []
+
+    def _add(part: str, locs: set[str] | None, tag: str) -> None:
+        for i, n in enumerate(joint_names):
+            if _joint_part(n) == part and (locs is None or n.split("_")[0] in locs):
+                sel_set.add(i)
+        tag_parts.append(tag)
+
+    if args.calf:        _add("calf",  None,    "calf")
+    if args.calf_front:  _add("calf",  _FRONT,  "calf_front")
+    if args.calf_back:   _add("calf",  _BACK,   "calf_back")
+    if args.thigh:       _add("thigh", None,    "thigh")
+    if args.thigh_front: _add("thigh", _FRONT,  "thigh_front")
+    if args.thigh_back:  _add("thigh", _BACK,   "thigh_back")
+    if args.hip:         _add("hip",   None,    "hip")
+    if args.hip_front:   _add("hip",   _FRONT,  "hip_front")
+    if args.hip_back:    _add("hip",   _BACK,   "hip_back")
 
     if not sel_set:
         # default: all 12
-        fit_parts = {"hip", "thigh", "calf"}
         sel_set   = set(range(len(joint_names)))
+        tag_parts = ["all"]
 
     sel_cols  = sorted(sel_set)
     sel_names = [joint_names[i] for i in sel_cols]
+    parts_tag = "_".join(tag_parts)
 
-    if fit_parts:
-        print(f"Fitting parts:   {sorted(fit_parts)}")
-    if args.joint:
-        print(f"Fitting joints:  {args.joint}")
     print(f"Selected joints ({len(sel_names)}): {sel_names}")
 
     # Initial positions — recording is in offset-space so q0 ≈ 0
@@ -342,14 +354,7 @@ def main() -> None:
 
     plt.tight_layout(rect=[0, 0, 1, 0.90])
 
-    stamp = "_".join(args.recording.stem.split("_")[:2])
-    # Build a concise tag from selected joint names
-    tag_parts: list[str] = sorted(fit_parts)
-    for jn in args.joint:
-        short = jn.replace("_joint", "")
-        if short not in tag_parts:
-            tag_parts.append(short)
-    parts_tag   = "_".join(tag_parts) if tag_parts else "all"
+    stamp       = "_".join(args.recording.stem.split("_")[:2])
     plot_path   = args.recording.parent / f"{stamp}_sysid_{parts_tag}.png"
     result_path = args.recording.parent / f"{stamp}_sysid_{parts_tag}.npz"
 
@@ -365,7 +370,7 @@ def main() -> None:
         frictionloss  = np.array([frictionloss]),
         loss          = np.array([es.result.fbest]),
         vel_weight    = np.array([vel_weight]),
-        fit_parts     = np.array(sorted(fit_parts)) if fit_parts else np.array(["(individual)"]),
+        fit_tag       = np.array([parts_tag]),
         sel_joints    = np.array(sel_names),
         q_sim_fitted  = q_sim_best[:, sel_cols],
         dq_sim_fitted = dq_sim_best[:, sel_cols],
