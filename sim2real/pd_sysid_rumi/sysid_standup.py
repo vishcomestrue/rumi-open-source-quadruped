@@ -39,6 +39,16 @@ PHYSICS_DT = 0.004
 
 _PARTS = ["hip", "thigh", "calf"]
 
+# ── Parameter bounds and frozen params (edit these manually) ───────────────────
+#                    armature   damping   frictionloss
+_BOUNDS_LO = np.array([0.00001,  0.01,     0.001])   # physical lower limits
+_BOUNDS_HI = np.array([0.1,      5.0,      0.5  ])   # physical upper limits
+
+# Indices to freeze (0=armature, 1=damping, 2=frictionloss).
+# Frozen params are held at _INIT values and excluded from CMA-ES.
+# Example: _FROZEN = {0} locks armature; _FROZEN = {1, 2} locks damping+frictionloss.
+_FROZEN: set[int] = set()   # empty = optimise all three
+
 
 # ── MuJoCo helpers ─────────────────────────────────────────────────────────────
 
@@ -123,7 +133,7 @@ def replay_all(
 # ── Loss ────────────────────────────────────────────────────────────────────────
 
 def loss(
-    theta:       np.ndarray,   # [log_armature, log_damping, log_frictionloss]
+    theta_full:  np.ndarray,   # [log_armature, log_damping, log_frictionloss] — always len 3
     targets:     np.ndarray,   # (N, 12)
     q_real:      np.ndarray,   # (N, 12)
     dq_real:     np.ndarray,   # (N, 12)
@@ -134,7 +144,7 @@ def loss(
     sel_cols:    list[int],    # column indices of sel_names in data
     vel_weight:  float,
 ) -> float:
-    armature, damping, frictionloss = np.exp(theta)
+    armature, damping, frictionloss = np.exp(theta_full)
     q_sim, dq_sim = replay_all(
         targets, q0, control_hz, joint_names, sel_names,
         armature, damping, frictionloss,
@@ -168,6 +178,9 @@ def main() -> None:
                         help="CMA-ES initial step size in log-space.")
     parser.add_argument("--vel-weight", type=float, default=None,
                         help="Velocity loss weight (auto if omitted).")
+    parser.add_argument("--freeze", type=str, default=None,
+                        choices=["armature", "damping", "frictionloss"],
+                        help="Lock one parameter at its _INIT value and optimise the other two.")
     args = parser.parse_args()
 
     # ── Load data ───────────────────────────────────────────────────────────────
@@ -242,16 +255,43 @@ def main() -> None:
               f"[std_q={std_q:.4f}  std_dq={std_dq:.4f}]")
 
     # ── Initial guess — taken directly from rumi.xml defaults ──────────────────
-    _INIT = [0.012, 0.66, 0.09]
-    theta0 = np.log(_INIT)
-    loss0  = loss(theta0, targets, q_real, dq_real, q0,
-                  control_hz, joint_names, sel_names, sel_cols, vel_weight)
+    _INIT      = np.array([0.012, 0.66, 0.09])
+    _param_lbl = ["armature", "damping", "frictionloss"]
+    _FROZEN    = {_param_lbl.index(args.freeze)} if args.freeze else set()
+    _free_idx  = [i for i in range(3) if i not in _FROZEN]
+
+    theta0_full = np.log(_INIT)
+
+    # Helper: expand reduced vector back to full 3-vector (frozen slots = _INIT)
+    def _expand(theta_reduced: np.ndarray) -> np.ndarray:
+        full = theta0_full.copy()
+        for k, fi in enumerate(_free_idx):
+            full[fi] = theta_reduced[k]
+        return full
+
+    loss0 = loss(theta0_full, targets, q_real, dq_real, q0,
+                 control_hz, joint_names, sel_names, sel_cols, vel_weight)
     print(f"\nInitial guess:  armature={_INIT[0]}  damping={_INIT[1]}  "
           f"frictionloss={_INIT[2]}  loss={loss0:.6f}")
+    print(f"Bounds lo:      armature={_BOUNDS_LO[0]}  damping={_BOUNDS_LO[1]}  "
+          f"frictionloss={_BOUNDS_LO[2]}")
+    print(f"Bounds hi:      armature={_BOUNDS_HI[0]}  damping={_BOUNDS_HI[1]}  "
+          f"frictionloss={_BOUNDS_HI[2]}")
+    if _FROZEN:
+        frozen_names = [_param_lbl[i] for i in sorted(_FROZEN)]
+        free_names   = [_param_lbl[i] for i in _free_idx]
+        print(f"Frozen params:  {frozen_names}  (held at _INIT values)")
+        print(f"Free params:    {free_names}")
+    else:
+        print("Frozen params:  none  (optimising all three)")
 
     # ── CMA-ES ──────────────────────────────────────────────────────────────────
+    theta0_reduced = theta0_full[_free_idx]
+    lo_reduced     = np.log(_BOUNDS_LO)[_free_idx].tolist()
+    hi_reduced     = np.log(_BOUNDS_HI)[_free_idx].tolist()
+
     es = cma.CMAEvolutionStrategy(
-        theta0,
+        theta0_reduced,
         args.sigma0,
         {
             "popsize": args.popsize,
@@ -259,6 +299,7 @@ def main() -> None:
             "tolx":    1e-6,
             "tolfun":  1e-8,
             "verbose": 1,
+            "bounds":  [lo_reduced, hi_reduced],
         },
     )
 
@@ -269,20 +310,20 @@ def main() -> None:
     while not es.stop():
         solutions = es.ask()
         fitnesses = [
-            loss(theta, targets, q_real, dq_real, q0,
+            loss(_expand(theta), targets, q_real, dq_real, q0,
                  control_hz, joint_names, sel_names, sel_cols, vel_weight)
             for theta in solutions
         ]
         es.tell(solutions, fitnesses)
         iter_i += 1
         if iter_i % 10 == 0:
-            best = np.exp(es.result.xbest)
+            best = np.exp(_expand(es.result.xbest))
             print(f"  iter {iter_i:4d}  loss={es.result.fbest:.6f}  "
                   f"armature={best[0]:.5f}  damping={best[1]:.5f}  "
                   f"frictionloss={best[2]:.5f}")
 
     elapsed = time.time() - t0
-    armature, damping, frictionloss = np.exp(es.result.xbest)
+    armature, damping, frictionloss = np.exp(_expand(es.result.xbest))
 
     print(f"\nDone in {elapsed:.1f}s  ({iter_i} iters)")
     print(f"  armature     = {armature:.6f}")
