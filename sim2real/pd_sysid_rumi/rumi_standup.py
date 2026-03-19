@@ -489,6 +489,10 @@ class StandupSignalGen:
                 t_mod     = t % T
                 inst_f    = f0 + (f1 - f0) * t_mod / T
                 val       = centre + swing * np.sin(2.0 * np.pi * inst_f * t_mod)
+            elif self.mode == "triag":
+                phase = (t % self.step_T) / self.step_T
+                env   = phase / 0.5 if phase < 0.5 else 1.0 - (phase - 0.5) / 0.5
+                val   = (centre - swing) + env * 2.0 * swing
             else:
                 val = 0.0
 
@@ -591,7 +595,7 @@ def main() -> None:
     with server.gui.add_folder("Signal"):
         dd_mode = server.gui.add_dropdown(
             "Mode",
-            options=["hold", "standup", "sine", "step", "chirp"],
+            options=["hold", "standup", "sine", "step", "chirp", "triag"],
             initial_value="hold",
         )
         sl_hip_amp = server.gui.add_slider(
