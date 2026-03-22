@@ -1,0 +1,42 @@
+<mujoco model="Rumi Sim2Real Scene">
+  <include file="rumi.xml"/>
+
+  <statistic center="0 0 0.15" extent="0.8" meansize="0.04"/>
+
+  <visual>
+    <headlight diffuse=".8 .8 .8" ambient=".2 .2 .2" specular="1 1 1"/>
+    <global azimuth="120" elevation="-20"/>
+    <quality shadowsize="8192"/>
+  </visual>
+
+  <asset>
+    <texture type="skybox" builtin="gradient" rgb1="1 1 1" rgb2="1 1 1" width="800" height="800"/>
+    <texture type="2d" name="groundplane" builtin="checker" mark="edge"
+             rgb1="1 1 1" rgb2="1 1 1" markrgb="0 0 0" width="300" height="300"/>
+    <material name="groundplane" texture="groundplane" texuniform="true" texrepeat="5 5" reflectance="0"/>
+  </asset>
+
+  <worldbody>
+    <geom name="floor" size="0 0 0.01" type="plane" material="groundplane"
+          priority="1" friction="0.6" condim="3" contype="1" conaffinity="0"/>
+
+    <!-- Body centre-of-mass target (position + orientation) -->
+    <body name="body_target" pos="0 0 0.24" mocap="true">
+      <geom type="box" size=".03 .05 .02" contype="0" conaffinity="0" rgba=".2 .6 .9 .5"/>
+    </body>
+  </worldbody>
+
+  <keyframe>
+    <key name="home"
+         qpos="0 0 0.04 1 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0"
+         ctrl="0 0 0 0 0 0 0 0 0 0 0 0"/>
+  </keyframe>
+
+</mujoco>
+
+<!-- <key
+  time="3.684"
+  qpos="-0.0104442 -0.00015858 0.0834816 0.999946 6.77108e-05 -0.0104172 -0.000540316 -0.00562671 -0.0668922 0.0917795 -0.0101164 0.0669637 -0.0931885 0.0487747 -0.0680831 0.103491 0.0481625 0.0677168 -0.103765"
+  qvel="-3.78736e-05 -2.99319e-07 -0.000155219 -2.37399e-06 -2.22035e-05 -8.4475e-06 -0.000777647 -0.00139383 0.000913176 -0.000808549 0.00144042 -0.000916307 0.00258724 2.42974e-05 3.82106e-07 0.0025835 -2.32623e-05 2.49109e-07"
+  ctrl="0 0 0 0 0 0 0 0 0 0 0 0"
+/> -->
