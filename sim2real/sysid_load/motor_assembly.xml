@@ -1,0 +1,79 @@
+<mujoco model="motor_assembly">
+  <compiler angle="radian" meshdir="assets"/>
+
+  <option timestep="0.001" />
+
+  <default>
+    <joint axis="0 0 1" armature="0.005" damping="0.5" frictionloss="0.1"/>
+  </default>
+
+  <visual>
+    <global offwidth="1280" offheight="720"/>
+    <quality shadowsize="4096"/>
+    <map znear="0.01"/>
+  </visual>
+
+  <asset>
+    <mesh name="motor" file="motor.stl" scale="0.001 0.001 0.001"/>
+
+    <material name="motor_mat" rgba="0.3 0.3 0.3 1"/>
+
+    <!-- Load assets -->
+    <mesh name="container" file="container.stl"/>
+    <mesh name="lid" file="lid.stl"/>
+    <mesh name="sand" file="sand.stl"/>
+    <mesh name="disc" file="disc.stl"/>
+
+    <material name="container_material" rgba="0.647059 0.647059 0.647059 1"/>
+    <material name="lid_material" rgba="0.231373 0.380392 0.705882 1"/>
+    <material name="sand_material" rgba="1 0 0 1"/>
+    <material name="disc_material" rgba="0.615686 0.811765 0.929412 1"/>
+  </asset>
+
+  <worldbody>
+    <camera name="fixed_cam" pos="-0.009 -0.206 0.066" xyaxes="0.999 -0.044 0.000 0.013 0.305 0.952"/>
+
+    <body name="motor_body" pos="0 0 0.048" quat="0.5 0.5 -0.5 0.5">
+      <geom name="motor_geom" type="mesh" mesh="motor" material="motor_mat" contype="0" conaffinity="0"/>
+      <inertial pos="0 0 0" mass="0.130" diaginertia="0.001 0.001 0.001"/>
+
+      <site name="output_shaft" pos="0 0 0.024" size="0.005" rgba="1 0 0 1" group="0"/>
+
+      <!-- Load body attached at output shaft -->
+      <body name="load_body" pos="0 0 0.024" quat="0 0 0 1">
+        <joint name="load_joint" type="hinge" axis="0 0 1"/>
+        <inertial pos="0.0979626 1.28463e-05 0.0465365" mass="0.583"
+          fullinertia="0.00063063 0.000726852 0.000581118 1.3302e-08 -5.00132e-05 -4.9016e-08"/>
+        <geom type="mesh" mesh="container" material="container_material" pos="0.1 -0 -0" quat="1 -0 0 -0" contype="0"
+          conaffinity="0" group="2"/>
+        <geom type="mesh" mesh="lid" material="lid_material" pos="0.0997374 0.000341777 -0.012" quat="1 -0 0 -0"
+          contype="0" conaffinity="0" group="2"/>
+        <geom type="mesh" mesh="sand" material="sand_material" pos="0.1 0 -0" quat="1 0 -0 0" contype="0"
+          conaffinity="0" group="2"/>
+        <geom type="mesh" mesh="disc" material="disc_material" pos="0.1 -0 0" quat="1 -0 0 0" contype="0"
+          conaffinity="0" group="2"/>
+      </body>
+    </body>
+
+    <light directional="true" pos="0 0 1" dir="0 0 -1" diffuse="0.6 0.6 0.6"/>
+    <light directional="true" pos="0 -0.5 0.5" dir="0 1 -0.5" diffuse="0.5 0.5 0.5"/>
+    <light directional="true" pos="0.5 0 0.5" dir="-1 0 -0.5" diffuse="0.3 0.3 0.3"/>
+    <light directional="true" pos="-0.5 0 0.5" dir="1 0 -0.5" diffuse="0.3 0.3 0.3"/>
+    <light directional="true" pos="0 0.5 0.5" dir="0 -1 -0.5" diffuse="0.2 0.2 0.2"/>
+  </worldbody>
+
+  <actuator>
+    <!-- <position name="load_motor" joint="load_joint" kp="6.0" kv="0" forcerange="-6.0 6.0" ctrlrange="-6.2832 6.2832"/> -->
+    <position name="load_motor" joint="load_joint" kp="6.0" kv="0.5" forcerange="-6.0 6.0" ctrlrange="-6.2832 6.2832"/>
+  </actuator>
+
+  <sensor>
+    <jointpos name="load_angle" joint="load_joint"/>
+    <jointvel name="load_velocity" joint="load_joint"/>
+  </sensor>
+
+  <keyframe>
+    <key name="home" qpos="0" ctrl="0"/>
+  </keyframe>
+
+</mujoco>
