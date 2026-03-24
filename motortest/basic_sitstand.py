@@ -32,6 +32,124 @@ import sys
 import time
 import argparse
 from mx64_controller import MX64Controller
+import matplotlib.pyplot as plt
+from collections import defaultdict
+
+
+# Motor labels: FLH = Front Left Hip, FLT = Front Left Thigh, FLC = Front Left Calf, etc.
+MOTOR_LABELS = {
+    1: "FLH",   # Front Left Hip
+    2: "FLT",   # Front Left Thigh
+    3: "FLC",   # Front Left Calf
+    4: "RLH",   # Rear Left Hip
+    5: "RLT",   # Rear Left Thigh
+    6: "RLC",   # Rear Left Calf
+    7: "RRH",   # Rear Right Hip
+    8: "RRT",   # Rear Right Thigh
+    9: "RRC",   # Rear Right Calf
+    10: "FRH",  # Front Right Hip
+    11: "FRT",  # Front Right Thigh
+    12: "FRC",  # Front Right Calf
+}
+
+
+def read_all_torques(controller, motor_ids):
+    """
+    Read current (torque) from all motors.
+    
+    Args:
+        controller: MX64Controller instance
+        motor_ids: List of motor IDs to read from
+    
+    Returns:
+        dict: {motor_id: current_ma} or None if any read fails
+    """
+    torques = {}
+    for mid in motor_ids:
+        current_ma = controller.read_current_ma(mid)
+        if current_ma is None:
+            return None
+        torques[mid] = current_ma
+    return torques
+
+
+def print_torques(torques):
+    """
+    Print torque values with short labels.
+    
+    Args:
+        torques: dict {motor_id: current_ma}
+    """
+    if torques is None:
+        print("  [ERROR] Failed to read torques")
+        return
+    
+    # Print in a compact format: FLH:123mA FLT:456mA ...
+    torque_strs = [f"{MOTOR_LABELS.get(mid, f'M{mid}')}:{current:.0f}mA" 
+                   for mid, current in sorted(torques.items())]
+    print(f"  Torques: {' '.join(torque_strs)}")
+
+
+def print_torque_stats(torque_history):
+    """
+    Print min/max torque statistics for each motor.
+    
+    Args:
+        torque_history: dict {motor_id: [list of torque values]}
+    """
+    print("\n" + "=" * 60)
+    print("   Torque Statistics (Min/Max)")
+    print("=" * 60)
+    
+    for mid in sorted(torque_history.keys()):
+        values = torque_history[mid]
+        if values:
+            min_torque = min(values)
+            max_torque = max(values)
+            avg_torque = sum(values) / len(values)
+            label = MOTOR_LABELS.get(mid, f"M{mid}")
+            print(f"  {label:4s} (Motor {mid:2d}): Min={min_torque:6.0f}mA  Max={max_torque:6.0f}mA  Avg={avg_torque:6.0f}mA")
+
+
+def plot_torque_history(torque_history, timestamps, control_freq):
+    """
+    Plot torque history for all motors in a single figure.
+    
+    Args:
+        torque_history: dict {motor_id: [list of torque values]}
+        timestamps: list of time points
+        control_freq: control frequency for reference
+    """
+    if not torque_history or not timestamps:
+        print("[INFO] No torque data to plot")
+        return
+    
+    # Convert timestamps to relative time in seconds
+    if timestamps:
+        time_array = [(t - timestamps[0]) for t in timestamps]
+    else:
+        time_array = []
+    
+    plt.figure(figsize=(14, 10))
+    
+    # Plot all motors
+    for mid in sorted(torque_history.keys()):
+        values = torque_history[mid]
+        label = MOTOR_LABELS.get(mid, f"M{mid}")
+        plt.plot(time_array[:len(values)], values, label=f"{label} (M{mid})", linewidth=1.5)
+    
+    plt.xlabel('Time (seconds)', fontsize=12)
+    plt.ylabel('Current (mA)', fontsize=12)
+    plt.title(f'Motor Torque History - Control Frequency: {control_freq} Hz', fontsize=14)
+    plt.legend(loc='best', ncol=3, fontsize=9)
+    plt.grid(True, alpha=0.3)
+    plt.tight_layout()
+    
+    # Save and show
+    filename = f'torque_history_{int(time.time())}.png'
+    plt.savefig(filename, dpi=150)
+    print(f"\n[INFO] Torque plot saved to: {filename}")
+    plt.show()
 
 
 def run_sitstand(control_freq=5.0, duration=2.0, target_knee=500, target_hip=-200, repeat=1):
@@ -134,6 +252,11 @@ def run_sitstand(control_freq=5.0, duration=2.0, target_knee=500, target_hip=-20
     knee_step = sk
     hip_step = sh
 
+    # Initialize torque tracking
+    torque_history = defaultdict(list)  # {motor_id: [torque1, torque2, ...]}
+    timestamps = []  # Time points for each torque reading
+    start_time = time.time()
+
     try:
         for cycle in range(1, repeat + 1):
             if repeat > 1:
@@ -147,6 +270,10 @@ def run_sitstand(control_freq=5.0, duration=2.0, target_knee=500, target_hip=-20
             print(f"  Motors 3, 6  (knee): 0r -> -{target_knee}r")
             print(f"  Motors 2, 5  (hip):  0r -> {target_hip:+d}r")
             print(f"  Motors 8, 11 (hip):  0r -> {-target_hip:+d}r")
+            
+            # Read and display initial torques
+            torques = read_all_torques(controller, all_motor_ids)
+            print_torques(torques)
 
             # Continue until both reach their targets
             while (current_knee < target_knee if target_knee > 0 else current_knee > target_knee) or \
@@ -187,6 +314,13 @@ def run_sitstand(control_freq=5.0, duration=2.0, target_knee=500, target_hip=-20
                     print("\n[ERROR] Failed to write positions")
                     break
 
+                # Read and store torques
+                torques = read_all_torques(controller, all_motor_ids)
+                if torques:
+                    timestamps.append(time.time())
+                    for mid, torque_val in torques.items():
+                        torque_history[mid].append(torque_val)
+
                 # Status update
                 print(f"\r  Knee: {current_knee:5.0f}r / {target_knee}r | Hip: {current_hip:5.0f}r / {target_hip}r", end="", flush=True)
 
@@ -196,7 +330,13 @@ def run_sitstand(control_freq=5.0, duration=2.0, target_knee=500, target_hip=-20
                 if sleep_time > 0:
                     time.sleep(sleep_time)
 
+            
             print(f"\r  Knee: {current_knee:5.0f}r / {target_knee}r | Hip: {current_hip:5.0f}r / {target_hip}r - DONE")
+            
+            # Print Phase 1 torque stats
+            print("\n[PHASE 1 COMPLETE]")
+            torques = read_all_torques(controller, all_motor_ids)
+            print_torques(torques)
 
             # Hold at sit position briefly
             print("\n[HOLD] At SIT position for 1 second...")
@@ -243,6 +383,13 @@ def run_sitstand(control_freq=5.0, duration=2.0, target_knee=500, target_hip=-20
                     print("\n[ERROR] Failed to write positions")
                     break
 
+                # Read and store torques
+                torques = read_all_torques(controller, all_motor_ids)
+                if torques:
+                    timestamps.append(time.time())
+                    for mid, torque_val in torques.items():
+                        torque_history[mid].append(torque_val)
+
                 # Status update
                 print(f"\r  Knee: {current_knee:5.0f}r / 0r | Hip: {current_hip:5.0f}r / 0r", end="", flush=True)
 
@@ -254,6 +401,11 @@ def run_sitstand(control_freq=5.0, duration=2.0, target_knee=500, target_hip=-20
 
             print(f"\r  Knee: {current_knee:5.0f}r / 0r | Hip: {current_hip:5.0f}r / 0r - DONE")
 
+            # Print Phase 2 torque stats
+            print("\n[PHASE 2 COMPLETE]")
+            torques = read_all_torques(controller, all_motor_ids)
+            print_torques(torques)
+
             # Hold at stand position briefly between cycles (except last)
             if cycle < repeat:
                 print("\n[HOLD] At STAND position for 1 second...")
@@ -262,6 +414,11 @@ def run_sitstand(control_freq=5.0, duration=2.0, target_knee=500, target_hip=-20
         print("\n" + "=" * 60)
         print(f"[COMPLETE] Sit-Stand sequence finished! ({repeat} cycle(s))")
         print("=" * 60)
+
+        # Print torque statistics and plot
+        if torque_history:
+            print_torque_stats(torque_history)
+            plot_torque_history(torque_history, timestamps, control_freq)
 
     except KeyboardInterrupt:
         print("\n\n[INFO] Interrupted by user")
@@ -274,6 +431,15 @@ def run_sitstand(control_freq=5.0, duration=2.0, target_knee=500, target_hip=-20
     finally:
         print("\n[CLEANUP] Disabling torque and disconnecting...")
         controller.disconnect()
+        
+        # Show torque statistics if we have data (even on interrupt)
+        if torque_history:
+            print_torque_stats(torque_history)
+            try:
+                plot_torque_history(torque_history, timestamps, control_freq)
+            except Exception as e:
+                print(f"[WARNING] Could not generate plot: {e}")
+        
         print("\n[DONE] Test complete.")
 
 
