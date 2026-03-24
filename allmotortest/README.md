@@ -29,6 +29,34 @@ High-frequency controller for simultaneous control of multiple Dynamixel motors 
 - ✅ **Multi-Motor Support**: Easily scale from 3 to 12+ motors
 - ✅ **Robust Error Handling**: Automatic retries and graceful degradation
 
+## Important: USB Latency Timer Setup
+
+**Before running the controller**, you must set the USB latency timer to 1ms for optimal high-frequency performance. Without this setting, you may experience reduced control frequency and communication delays.
+
+### Automated Setup (One-time, Recommended)
+
+Run the automated setup script that detects your device and configures everything:
+
+```bash
+# From the repository root directory
+./setup_usb_latency.sh
+```
+
+The script will:
+- Detect your FTDI USB device automatically
+- Create a udev rule with the correct IDs
+- Install and activate it
+
+Done! The latency timer will be set to 1ms automatically whenever you plug in the device. This persists across reboots.
+
+### Manual Setup (Temporary, each session)
+
+If you prefer not to install the udev rule:
+
+```bash
+sudo sh -c 'echo 1 > /sys/bus/usb-serial/devices/ttyUSB0/latency_timer'
+```
+
 ## Quick Start
 
 ```bash
