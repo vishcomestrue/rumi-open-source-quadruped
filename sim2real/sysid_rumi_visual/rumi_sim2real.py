@@ -62,7 +62,7 @@ N_JOINTS = len(JOINT_NAMES)
 
 # ── Timing ─────────────────────────────────────────────────────────────────────
 CONTROL_HZ = 50
-VIZ_HZ     = 30
+VIZ_HZ     = 50
 
 # ── IK settings ────────────────────────────────────────────────────────────────
 IK_SOLVER     = "daqp"
@@ -74,6 +74,24 @@ ORI_THRESHOLD = 1e-4
 DEFAULT_BODY_POS_COST = 1.0
 DEFAULT_BODY_ORI_COST = 1.0
 DEFAULT_POSTURE_COST  = 1e-3
+
+# ── Default physics parameters (read from rumi.xml defaults) ───────────────────
+DEFAULT_KP           = 6.0
+DEFAULT_KV           = 0.0
+DEFAULT_DAMPING      = 0.45
+DEFAULT_ARMATURE     = 0.02
+DEFAULT_FRICTIONLOSS = 0.01
+
+# Thread-shared physics params — written by main thread, read by sim thread.
+# Plain dict + lock: both share the same process, no serialisation needed.
+_phys_lock   = threading.Lock()
+_phys_params = {
+    "kp":           DEFAULT_KP,
+    "kv":           DEFAULT_KV,
+    "damping":      DEFAULT_DAMPING,
+    "armature":     DEFAULT_ARMATURE,
+    "frictionloss": DEFAULT_FRICTIONLOSS,
+}
 
 # ── Shared memory layout ───────────────────────────────────────────────────────
 # shm_targets  : body_pos(3) + body_wxyz(4)  = 7 doubles
@@ -264,12 +282,23 @@ def sim_thread_fn(
     shm_sim_hz: mp.Array,
     stop_event: threading.Event,
 ):
-    dt     = 1.0 / CONTROL_HZ
+    dt          = 1.0 / CONTROL_HZ
+    n_substeps  = max(1, round(dt / model.opt.timestep))
     iters  = 0
     t_rate = time.time()
 
     while not stop_event.is_set():
         t = time.time()
+
+        # Apply live physics params from GUI sliders
+        with _phys_lock:
+            p = _phys_params.copy()
+        model.dof_damping[6:]        = p["damping"]
+        model.dof_armature[6:]       = p["armature"]
+        model.dof_frictionloss[6:]   = p["frictionloss"]
+        model.actuator_gainprm[:, 0] = p["kp"]
+        model.actuator_biasprm[:, 1] = -p["kp"]
+        model.actuator_biasprm[:, 2] = -p["kv"]
 
         configuration.update(data.qpos)
 
@@ -281,7 +310,8 @@ def sim_thread_fn(
                  data, dt, body_mocap_id, [])
 
         data.ctrl[:] = configuration.q[7:]
-        mujoco.mj_step(model, data)
+        for _ in range(n_substeps):
+            mujoco.mj_step(model, data)
 
         iters += 1
         elapsed_rate = time.time() - t_rate
@@ -477,6 +507,13 @@ def main():
         sl_body_ori = server.gui.add_slider("Body ori", min=0.0, max=5.0,  step=0.1,  initial_value=DEFAULT_BODY_ORI_COST)
         sl_posture  = server.gui.add_slider("Posture",  min=0.0, max=0.01, step=1e-4, initial_value=DEFAULT_POSTURE_COST)
 
+    with server.gui.add_folder("Physics params"):
+        sl_kp           = server.gui.add_slider("kp",            min=0.0,   max=30.0,  step=0.1,   initial_value=DEFAULT_KP)
+        sl_kv           = server.gui.add_slider("kv",            min=0.0,   max=5.0,   step=0.05,  initial_value=DEFAULT_KV)
+        sl_damping      = server.gui.add_slider("joint_damping", min=0.0,   max=5.0,   step=0.01,  initial_value=DEFAULT_DAMPING)
+        sl_armature     = server.gui.add_slider("armature",      min=0.0,   max=0.1,   step=0.001, initial_value=DEFAULT_ARMATURE)
+        sl_frictionloss = server.gui.add_slider("frictionloss",  min=0.0,   max=1.0,   step=0.01,  initial_value=DEFAULT_FRICTIONLOSS)
+
     # ── Viz thread ────────────────────────────────────────────────────────────
     threading.Thread(
         target=viz_thread_fn, daemon=True,
@@ -497,6 +534,13 @@ def main():
             base_task.set_position_cost(sl_body_pos.value)
             base_task.set_orientation_cost(sl_body_ori.value)
             posture_task.set_cost(sl_posture.value)
+
+            with _phys_lock:
+                _phys_params["kp"]           = sl_kp.value
+                _phys_params["kv"]           = sl_kv.value
+                _phys_params["damping"]      = sl_damping.value
+                _phys_params["armature"]     = sl_armature.value
+                _phys_params["frictionloss"] = sl_frictionloss.value
 
             txt_sim_hz.value = f"{_np(shm_sim_hz)[0]:.0f} Hz"
             real_hz = _np(shm_real_hz)[0]
