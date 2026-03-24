@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import argparse
 import threading
+import time
 from pathlib import Path
 
 import mujoco
@@ -23,10 +24,11 @@ _HERE      = Path(__file__).parent
 _SCENE_XML = _HERE / "scene.xml"
 PHYSICS_DT = 0.004
 
-# XML defaults (rumi.xml)
-_XML_ARMATURE    = 0.012
-_XML_DAMPING     = 0.66
-_XML_FRICTION    = 0.09
+# ── Parameter defaults and bounds (keep in sync with sysid_standup.py) ─────────
+#                armature   damping   frictionloss
+_INIT      = np.array([0.012,    0.66,     0.09  ])
+_BOUNDS_LO = np.array([0.00001,  0.01,     0.001 ])
+_BOUNDS_HI = np.array([0.1,      5.0,      0.5   ])
 
 
 # ── MuJoCo helpers ─────────────────────────────────────────────────────────────
@@ -127,8 +129,14 @@ def main() -> None:
     N           = len(t)
     q0          = q_real[0].copy()
 
+    kp_sim  = float(data["kp_sim"][0])  if "kp_sim"  in data else float("nan")
+    kd_sim  = float(data["kd_sim"][0])  if "kd_sim"  in data else float("nan")
+    kp_real = float(data["kp_real"][0]) if "kp_real" in data else float("nan")
+    kd_real = float(data["kd_real"][0]) if "kd_real" in data else float("nan")
+
     print(f"Loaded  N={N}  hz={control_hz}  duration={t[-1]-t[0]:.1f}s")
     print(f"Joints: {joint_names}")
+    print(f"kp_sim={kp_sim}  kd_sim={kd_sim}  kp_real={kp_real}  kd_real={kd_real}")
 
     # ── Resolve joint ───────────────────────────────────────────────────────────
     if args.joint is not None:
@@ -153,13 +161,16 @@ def main() -> None:
 
     with server.gui.add_folder("Parameters"):
         sl_arm  = server.gui.add_slider(
-            "Armature",     min=0.0,  max=10.0, step=0.1,  initial_value=_XML_ARMATURE
+            "Armature",     min=float(_BOUNDS_LO[0]), max=float(_BOUNDS_HI[0]),
+            step=0.001,  initial_value=float(_INIT[0]),
         )
         sl_damp = server.gui.add_slider(
-            "Damping",      min=0.0,  max=10.0, step=0.1,  initial_value=_XML_DAMPING
+            "Damping",      min=float(_BOUNDS_LO[1]), max=float(_BOUNDS_HI[1]),
+            step=0.01,   initial_value=float(_INIT[1]),
         )
         sl_fric = server.gui.add_slider(
-            "Frictionloss", min=0.0, max=2.0,  step=0.01, initial_value=_XML_FRICTION
+            "Frictionloss", min=float(_BOUNDS_LO[2]), max=float(_BOUNDS_HI[2]),
+            step=0.001,  initial_value=float(_INIT[2]),
         )
 
     with server.gui.add_folder("Actions"):
@@ -239,6 +250,9 @@ def main() -> None:
 
         pos_loss = float(np.sqrt(np.mean((q_sim[:, j_col] - q_real[:, j_col]) ** 2)))
         vel_loss = float(np.sqrt(np.mean((dq_sim[:, j_col] - dq_real[:, j_col]) ** 2)))
+        std_q  = float(np.std(q_real[:, j_col]))
+        std_dq = float(np.std(dq_real[:, j_col]))
+        vel_weight = std_q / std_dq if std_dq > 1e-12 else 0.0
 
         # Update plots
         plot_pos.data = (
@@ -259,10 +273,12 @@ def main() -> None:
 
         pos_rms_deg = float(pos_loss * 180.0 / np.pi)
         vel_rms_deg = float(vel_loss * 180.0 / np.pi)
+        combined    = pos_loss + vel_weight * vel_loss
         status_md.content = (
             f"**{jname}** (all {part})  "
             f"armature={arm:.4f}  damping={damp:.4f}  frictionloss={fric:.5f}  \n"
-            f"pos RMSE={pos_rms_deg:.2f}°  vel RMSE={vel_rms_deg:.2f}°/s"
+            f"pos RMSE={pos_rms_deg:.2f}°  vel RMSE={vel_rms_deg:.2f}°/s  "
+            f"combined={combined:.5f}  vel_weight={vel_weight:.4f}"
         )
 
         with _lock:
@@ -274,9 +290,9 @@ def main() -> None:
 
     @btn_reset.on_click
     def _on_reset(_) -> None:
-        sl_arm.value  = _XML_ARMATURE
-        sl_damp.value = _XML_DAMPING
-        sl_fric.value = _XML_FRICTION
+        sl_arm.value  = float(_INIT[0])
+        sl_damp.value = float(_INIT[1])
+        sl_fric.value = float(_INIT[2])
 
     print(f"\nViser running at http://localhost:8081")
     print(f"Adjust sliders → click 'Run Replay' to evaluate.")
@@ -284,7 +300,6 @@ def main() -> None:
     # Keep main thread alive
     try:
         while True:
-            import time
             time.sleep(1.0)
     except KeyboardInterrupt:
         print("\nDone.")
