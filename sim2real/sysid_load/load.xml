@@ -1,0 +1,48 @@
+<?xml version="1.0" ?>
+<!-- Generated using onshape-to-robot -->
+<!-- Onshape https://cad.onshape.com/documents/78016ee1f875560da23471c5/w/92ffb8f9ea0eb7901f3d819d/e/34dcb3d4637fbe895c2df050 -->
+<mujoco model="sysid_cylinder">
+  <compiler angle="radian" meshdir="assets" autolimits="true"/>
+  <default>
+    <default class="sysid_cylinder">
+      <joint frictionloss="0.1" armature="0.005"/>
+      <position kp="50" dampratio="1"/>
+      <default class="visual">
+        <geom type="mesh" contype="0" conaffinity="0" group="2"/>
+      </default>
+      <default class="collision">
+        <geom group="3"/>
+      </default>
+    </default>
+  </default>
+  <worldbody>
+    <!-- Link disc -->
+    <body name="disc" pos="0 0 0" quat="1 0 0 0" childclass="sysid_cylinder">
+      <inertial pos="0.0979626 1.28463e-05 0.0465365" mass="0.583" fullinertia="0.00063063 0.000726852 0.000581118 1.3302e-08 -5.00132e-05 -4.9016e-08"/>
+      <!-- Part container -->
+      <geom type="mesh" class="visual" pos="0.1 -0 -0" quat="1 -0 0 -0" mesh="container" material="container_material"/>
+      <geom type="mesh" class="collision" pos="0.1 -0 -0" quat="1 -0 0 -0" mesh="container" material="container_material"/>
+      <!-- Part lid -->
+      <geom type="mesh" class="visual" pos="0.0997374 0.000341777 -0.012" quat="1 -0 0 -0" mesh="lid" material="lid_material"/>
+      <geom type="mesh" class="collision" pos="0.0997374 0.000341777 -0.012" quat="1 -0 0 -0" mesh="lid" material="lid_material"/>
+      <!-- Part sand -->
+      <geom type="mesh" class="visual" pos="0.1 0 -0" quat="1 0 -0 0" mesh="sand" material="sand_material"/>
+      <geom type="mesh" class="collision" pos="0.1 0 -0" quat="1 0 -0 0" mesh="sand" material="sand_material"/>
+      <!-- Part disc -->
+      <geom type="mesh" class="visual" pos="0.1 -0 0" quat="1 -0 0 0" mesh="disc" material="disc_material"/>
+      <geom type="mesh" class="collision" pos="0.1 -0 0" quat="1 -0 0 0" mesh="disc" material="disc_material"/>
+    </body>
+  </worldbody>
+  <asset>
+    <mesh file="container.stl"/>
+    <mesh file="lid.stl"/>
+    <mesh file="disc.stl"/>
+    <mesh file="sand.stl"/>
+    <material name="container_material" rgba="0.647059 0.647059 0.647059 1"/>
+    <material name="lid_material" rgba="0.231373 0.380392 0.705882 1"/>
+    <material name="sand_material" rgba="1 0 0 1"/>
+    <material name="disc_material" rgba="0.615686 0.811765 0.929412 1"/>
+  </asset>
+  <actuator/>
+  <equality/>
+</mujoco>
