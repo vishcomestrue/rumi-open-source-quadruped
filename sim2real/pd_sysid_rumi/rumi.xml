@@ -11,11 +11,13 @@
       <!-- This globaly disables all collisions. -->
       <geom condim="1" contype="0" conaffinity="0"/>
       <!-- Joint damping and armature provide numerical stability -->
-      <!-- <joint pos="0 0 0" axis="0 1 0" damping="0.5" armature="0.005"/> -->
+      <!-- <joint pos="0 0 0" axis="0 1 0" damping="0.5" armature="0.005" frictionloss="0.1"/> -->
       <!-- The below values are obtained from the BAM repo -->
-      <joint pos="0 0 0" axis="0 1 0" armature="0.012" damping="0.66" frictionloss="0.09"/>
+      <!-- <joint pos="0 0 0" axis="0 1 0" armature="0.012" damping="0.66" frictionloss="0.09"/> -->
+      <!-- AFTER OUR SYSTEM IDENTIFICATION -->
+      <joint pos="0 0 0" axis="0 1 0" armature="0.01623" damping="0.59436" frictionloss="0.001"/>
       <!-- kp: position gain, kv: velocity gain (derivative damping), forcerange: actuator limits -->
-      <position inheritrange="1" kp="6.0" kv="0" forcerange="-6.0 6.0"/>
+      <position inheritrange="1" kp="20.0" kv="0" forcerange="-6.0 6.0"/>
       <!-- Joint ranges and constants for section of legs -->
       <default class="hip">
         <joint axis="1 0 0"/>
