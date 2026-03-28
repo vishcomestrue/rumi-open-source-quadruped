@@ -53,7 +53,7 @@ _MODE_EXTENDED_POSITION = 4    # multi-turn position control
 #   Kp = Kp_gain(84) / 128   →  raw = Kp * 128
 #   Ki = Ki_gain(82) / 65536 →  raw = Ki * 65536
 #   Kd = Kd_gain(80) / 16    →  raw = Kd * 16
-DEFAULT_KP = 1.0    # Nm/rad  (written on every enable())
+DEFAULT_KP = 20.0    # Nm/rad  (written on every enable())
 DEFAULT_KD = 0.0    # Nm·s/rad
 
 # ── Physical constants ─────────────────────────────────────────────────────────

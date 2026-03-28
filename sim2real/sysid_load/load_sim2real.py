@@ -46,7 +46,7 @@ CONTROL_HZ  = 50
 PLOT_WINDOW = 10.0   # seconds of history shown in live plots
 
 # ── Default physics / control params ───────────────────────────────────────────
-DEFAULT_KP           = 6.0
+DEFAULT_KP           = 20.0
 DEFAULT_KD           = 0.0
 DEFAULT_DAMPING      = 0.2
 DEFAULT_ARMATURE     = 0.01
