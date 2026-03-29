@@ -152,7 +152,7 @@ def plot_torque_history(torque_history, timestamps, control_freq):
     plt.show()
 
 
-def run_sitstand(control_freq=5.0, duration=2.0, target_knee=500, target_hip=-200, repeat=1):
+def run_sitstand(control_freq=5.0, duration=2.0, target_knee=500, target_hip=-200, repeat=1, plot=False):
     """
     Run basic sit-stand motion.
 
@@ -418,7 +418,8 @@ def run_sitstand(control_freq=5.0, duration=2.0, target_knee=500, target_hip=-20
         # Print torque statistics and plot
         if torque_history:
             print_torque_stats(torque_history)
-            plot_torque_history(torque_history, timestamps, control_freq)
+            if plot:
+                plot_torque_history(torque_history, timestamps, control_freq)
 
     except KeyboardInterrupt:
         print("\n\n[INFO] Interrupted by user")
@@ -435,10 +436,11 @@ def run_sitstand(control_freq=5.0, duration=2.0, target_knee=500, target_hip=-20
         # Show torque statistics if we have data (even on interrupt)
         if torque_history:
             print_torque_stats(torque_history)
-            try:
-                plot_torque_history(torque_history, timestamps, control_freq)
-            except Exception as e:
-                print(f"[WARNING] Could not generate plot: {e}")
+            if plot:
+                try:
+                    plot_torque_history(torque_history, timestamps, control_freq)
+                except Exception as e:
+                    print(f"[WARNING] Could not generate plot: {e}")
         
         print("\n[DONE] Test complete.")
 
@@ -510,6 +512,12 @@ Step sizes (sk, sh) are automatically calculated as:
         help="Number of times to repeat the sit-stand cycle (default: 1)"
     )
 
+    parser.add_argument(
+        "--plot",
+        action="store_true",
+        help="Generate and save torque plot after the run"
+    )
+
     args = parser.parse_args()
 
     # Validate arguments
@@ -538,7 +546,8 @@ Step sizes (sk, sh) are automatically calculated as:
         duration=args.duration,
         target_knee=args.target_knee,
         target_hip=args.target_hip,
-        repeat=args.repeat
+        repeat=args.repeat,
+        plot=args.plot
     )
 
 
