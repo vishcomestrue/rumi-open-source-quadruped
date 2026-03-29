@@ -1,0 +1,21 @@
+# Python
+__pycache__/
+*.pyc
+
+# Data logs
+# *.csv
+# *.png
+
+# Temporary files
+*copy.py
+*.backup
+
+# Local scripts (decide later)
+imu_reader_*.py
+test_*.py
+
+# External libs
+DynamixelSDK/
+
+# Visualizations
+*.html
