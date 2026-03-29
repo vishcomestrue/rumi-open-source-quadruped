@@ -1,0 +1,255 @@
+#!/usr/bin/env python3
+"""Direct sim2real deployment — Rumi getup task.
+
+Reads observations from real hardware (motors + IMU), runs the MLP policy
+on-device, and sends position commands to the Dynamixel motors at 50 Hz.
+
+No parallel simulation. No mjlab dependency at runtime.
+
+Usage:
+    python run_getup.py                        # default checkpoint, 5 s
+    python run_getup.py --duration 10          # longer run
+    python run_getup.py --no-imu               # skip IMU (uses identity quat)
+    python run_getup.py --dry-run              # motors silent, just print actions
+"""
+
+import argparse
+import sys
+import time
+from pathlib import Path
+
+import numpy as np
+
+# ---------------------------------------------------------------------------
+# Paths
+# ---------------------------------------------------------------------------
+_HERE = Path(__file__).resolve().parent
+sys.path.insert(0, str(_HERE))                      # deploy/getup/
+sys.path.insert(0, str(_HERE.parent))               # deploy/
+sys.path.insert(0, str(_HERE.parent.parent))        # sim2real/ (DynamixelSDK path ref)
+
+from mx64_controller import MX64Controller
+from imu import IMU
+from policy import GetupPolicy
+from observations import build_obs, JOINT_ORDER
+
+# ---------------------------------------------------------------------------
+# Constants
+# ---------------------------------------------------------------------------
+CONTROL_HZ   = 50
+DT           = 1.0 / CONTROL_HZ
+ACTION_SCALE = 0.075          # rad per unit — 0.25 * effort_limit(6) / stiffness(20)
+# ACTION_SCALE = 0.25          # rad per unit — 0.25 * effort_limit(6) / stiffness(20)
+DEFAULT_CKPT = _HERE / "checkpoint" / "latest_getup.pt"
+
+
+# ---------------------------------------------------------------------------
+# Velocity helper — GroupSync read is position-only, so we finite-difference.
+# ---------------------------------------------------------------------------
+class VelocityEstimator:
+    def __init__(self):
+        self._prev_pos: dict | None = None
+        self._prev_t: float | None  = None
+
+    def update(self, pos_dict: dict, t: float) -> dict:
+        if self._prev_pos is None or self._prev_t is None:
+            self._prev_pos = pos_dict.copy()
+            self._prev_t   = t
+            return {j: 0.0 for j in JOINT_ORDER}
+
+        dt = t - self._prev_t
+        if dt <= 0:
+            return {j: 0.0 for j in JOINT_ORDER}
+
+        vel = {j: (pos_dict[j] - self._prev_pos[j]) / dt for j in JOINT_ORDER}
+        self._prev_pos = pos_dict.copy()
+        self._prev_t   = t
+        return vel
+
+
+# ---------------------------------------------------------------------------
+# Main
+# ---------------------------------------------------------------------------
+def main():
+    parser = argparse.ArgumentParser(description="Rumi getup direct sim2real")
+    parser.add_argument("--checkpoint", default=str(DEFAULT_CKPT),
+                        help="Path to .pt checkpoint (default: checkpoint/latest_getup.pt)")
+    parser.add_argument("--duration",   type=float, default=5.0,
+                        help="Run duration in seconds (default: 5.0)")
+    parser.add_argument("--dry-run",    action="store_true",
+                        help="Do not send commands to motors (print actions only)")
+    parser.add_argument("--no-imu",     action="store_true",
+                        help="Skip IMU — use identity quaternion (for testing without IMU)")
+    args = parser.parse_args()
+
+    max_steps = int(args.duration * CONTROL_HZ)
+
+    print("\n" + "=" * 60)
+    print("   Rumi Getup — Direct Sim2Real")
+    print("=" * 60)
+    print(f"  Checkpoint : {Path(args.checkpoint).name}")
+    print(f"  Duration   : {args.duration:.1f} s  ({max_steps} steps @ {CONTROL_HZ} Hz)")
+    print(f"  Dry run    : {args.dry_run}")
+    print(f"  IMU        : {'disabled (identity quat)' if args.no_imu else 'enabled'}")
+    print()
+
+    # ------------------------------------------------------------------
+    # 1. Load policy
+    # ------------------------------------------------------------------
+    policy = GetupPolicy(args.checkpoint)
+
+    # ------------------------------------------------------------------
+    # 2. Connect IMU
+    # ------------------------------------------------------------------
+    imu = None
+    if not args.no_imu:
+        try:
+            imu = IMU()
+        except Exception as exc:
+            print(f"[WARNING] IMU init failed: {exc}")
+            print("[WARNING] Falling back to identity quaternion.")
+
+    # ------------------------------------------------------------------
+    # 3. Connect motors
+    # ------------------------------------------------------------------
+    controller = None
+    if not args.dry_run:
+        print("\nPlace robot in SITTING POSITION, then press Enter ...")
+        input()
+
+        ctrl_cfg = str(_HERE.parent / "motor_config.json")
+        controller = MX64Controller(config_path=ctrl_cfg, auto_connect=False)
+        motor_ids = controller.initialize(expected_motors=12)
+        if motor_ids is None:
+            print("[ERROR] Motor initialization failed. Exiting.")
+            sys.exit(1)
+
+        # Capture sit-pose zero reference
+        zero_pos = controller.sync_read_positions(max_retries=10, retry_delay=0.02)
+        if zero_pos is None:
+            print("[ERROR] Could not read initial motor positions. Exiting.")
+            controller.disconnect()
+            sys.exit(1)
+        print("[INFO] Sit-pose zero reference captured.")
+    else:
+        zero_pos = {i: 2048 for i in range(1, 13)}   # dummy for dry-run
+        print("[DRY RUN] Motors skipped.")
+
+    # Motor ID → joint name (from JOINT_ORDER + JOINT_ID_MAP)
+    JOINT_ID_MAP = {
+        "FL_hip_joint": 1,  "FL_thigh_joint": 2,  "FL_calf_joint": 3,
+        "BL_hip_joint": 4,  "BL_thigh_joint": 5,  "BL_calf_joint": 6,
+        "BR_hip_joint": 7,  "BR_thigh_joint": 8,  "BR_calf_joint": 9,
+        "FR_hip_joint": 10, "FR_thigh_joint": 11, "FR_calf_joint": 12,
+    }
+    RADIANS_TO_POS = 4096.0 / (2.0 * np.pi)
+
+    def read_joint_positions() -> dict:
+        """Read positions relative to sit-pose zero, in radians."""
+        raw = controller.sync_read_positions()
+        if raw is None:
+            return None
+        result = {}
+        for joint, mid in JOINT_ID_MAP.items():
+            offset_ticks = raw[mid] - zero_pos[mid]
+            result[joint] = offset_ticks / RADIANS_TO_POS
+        return result
+
+    def write_joint_positions(pos_rad_dict: dict) -> None:
+        """Write target positions (offsets from sit-pose zero) in radians."""
+        raw_targets = {}
+        for joint, mid in JOINT_ID_MAP.items():
+            offset_ticks = int(round(pos_rad_dict[joint] * RADIANS_TO_POS))
+            raw_targets[mid] = zero_pos[mid] + offset_ticks
+        controller.sync_write_positions(raw_targets)
+
+    # ------------------------------------------------------------------
+    # 4. Warm up — force FK import and torch JIT before the timed loop
+    # ------------------------------------------------------------------
+    print("[WARMUP] Compiling FK and policy (first call is slow) ...")
+    _dummy_pos = {j: 0.0 for j in JOINT_ORDER}
+    _dummy_vel = {j: 0.0 for j in JOINT_ORDER}
+    _dummy_q   = np.array([1.0, 0.0, 0.0, 0.0], dtype=np.float32)
+    _dummy_obs = build_obs(_dummy_pos, _dummy_vel, _dummy_q, np.zeros(12, dtype=np.float32))
+    policy(_dummy_obs)
+    print("[WARMUP] Done.\n")
+
+    # 5. Control loop
+    # ------------------------------------------------------------------
+    vel_estimator = VelocityEstimator()
+    last_action   = np.zeros(12, dtype=np.float32)
+
+    print("\n" + "=" * 60)
+    print("   Starting control loop — Ctrl+C to stop")
+    print("=" * 60 + "\n")
+
+    start_time = time.time()
+    late_count  = 0
+
+    try:
+        for step in range(max_steps):
+            loop_start = time.time()
+            t = loop_start - start_time
+
+            # --- Read hardware ---
+            if not args.dry_run:
+                pos_dict = read_joint_positions()
+                if pos_dict is None:
+                    print(f"[WARNING] Step {step}: motor read failed, skipping.")
+                    time.sleep(DT)
+                    continue
+            else:
+                pos_dict = {j: 0.0 for j in JOINT_ORDER}
+
+            now = time.time()
+            vel_dict = vel_estimator.update(pos_dict, now)
+
+            if imu is not None:
+                quat = imu.read_quaternion()
+            else:
+                quat = np.array([1.0, 0.0, 0.0, 0.0], dtype=np.float32)
+
+            # --- Build obs ---
+            obs = build_obs(pos_dict, vel_dict, quat, last_action)
+
+            # --- Policy inference ---
+            raw_action = policy(obs)   # [12], unscaled
+
+            # --- Send to motors ---
+            processed = raw_action * ACTION_SCALE   # [12], rad offsets from sit pose
+            if not args.dry_run:
+                pos_targets = {j: float(processed[i]) for i, j in enumerate(JOINT_ORDER)}
+                write_joint_positions(pos_targets)
+
+            # --- Store for next step ---
+            last_action = raw_action
+
+            # --- Status print every 50 steps (1 s) ---
+            if step % 50 == 0:
+                elapsed = time.time() - start_time
+                print(f"  step {step:4d}/{max_steps} | t={elapsed:.2f}s | "
+                      f"action_rms={float(np.sqrt(np.mean(processed**2))):.4f} rad")
+
+            # --- Timing ---
+            elapsed_loop = time.time() - loop_start
+            sleep_time   = DT - elapsed_loop
+            if sleep_time > 0:
+                time.sleep(sleep_time)
+            elif sleep_time < -0.002:
+                late_count += 1
+
+    except KeyboardInterrupt:
+        print("\n[STOP] Ctrl+C received.")
+
+    finally:
+        total = time.time() - start_time
+        steps_done = min(step + 1, max_steps)
+        print(f"\n[DONE] {steps_done} steps in {total:.2f} s "
+              f"(avg {steps_done/total:.1f} Hz, {late_count} late steps)")
+        if controller is not None:
+            controller.disconnect()
+            print("[INFO] Motors disconnected.")
+
+
+if __name__ == "__main__":
+    main()
