@@ -150,6 +150,8 @@ class ViserRobotView:
             body_id = self.mj_model.geom_bodyid[i]
             if is_fixed_body(self.mj_model, body_id):
                 continue
+            if self.mj_model.body_mocapid[body_id] >= 0:
+                continue
             key = (body_id, int(self.mj_model.geom_group[i]))
             body_group_geoms.setdefault(key, []).append(i)
 

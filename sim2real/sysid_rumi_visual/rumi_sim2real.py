@@ -1,23 +1,29 @@
 """Rumi quadruped sim2real with mink IK — multiprocessing edition.
 
-User controls 1 body target in viser.  mink solves IK every step to produce
-12 joint-position targets sent to both MuJoCo sim and real Dynamixel motors.
+User controls 1 body target in viser.  mink solves IK once per step (from the
+current sim qpos) to produce 12 joint-position targets that are sent to both
+the MuJoCo sim and the real Dynamixel motors.
 
-Each side (sim and real) runs independent IK grounded in its own joint state.
+Three visualised robots
+───────────────────────
+  target (green) : pure IK solution — no physics, just FK at the IK joint angles.
+                   This is the ideal/reference pose the controller is asking for.
+  sim    (grey)  : MuJoCo physics simulation driven by the same joint targets.
+                   Shows how the sim robot responds under the tuned physics params.
+  real   (blue)  : ghost of the actual hardware joint angles read back each cycle.
+                   Shows how the real robot tracks the target.
 
-Floor reference for real ghost
-───────────────────────────────
-Feet are assumed not to slip.  At startup the FL foot site world position in
-sim is used as the fixed ground anchor.  The real ghost body position is
-computed each frame by FK on real joints + applying the offset that places the
-real FL foot at the same world position.
+Floor reference for ghosts
+───────────────────────────
+Feet are assumed not to slip.  Each ghost's body is shifted so that its foot
+centroid matches the sim foot centroid (3-D translation only, no rotation).
 
 Processes / threads
 ───────────────────
-  Real process  (CONTROL_HZ): mink IK on real state + hardware read/write
+  Real process  (CONTROL_HZ): reads shm_q_target, sends to hardware, reads back
   Main process:
-      Sim  thread (CONTROL_HZ): mink IK on sim state + plain MuJoCo step
-      Viz  thread (30 Hz)     : viser robot update
+      Sim  thread (CONTROL_HZ): single mink IK solve → shm_q_target + mj_step
+      Viz  thread (VIZ_HZ)    : viser update for all three robots
       Main thread (60 Hz)     : viser target poll + GUI update
 
 Run
@@ -76,11 +82,12 @@ DEFAULT_BODY_ORI_COST = 1.0
 DEFAULT_POSTURE_COST  = 1e-3
 
 # ── Default physics parameters (read from rumi.xml defaults) ───────────────────
-DEFAULT_KP           = 6.0
+DEFAULT_KP           = 20.0
 DEFAULT_KV           = 0.0
-DEFAULT_DAMPING      = 0.45
-DEFAULT_ARMATURE     = 0.02
-DEFAULT_FRICTIONLOSS = 0.01
+# armature="0.01623" damping="0.59436" frictionloss="0.001"
+DEFAULT_DAMPING      = 0.59436
+DEFAULT_ARMATURE     = 0.01623
+DEFAULT_FRICTIONLOSS = 0.001
 
 # Thread-shared physics params — written by main thread, read by sim thread.
 # Plain dict + lock: both share the same process, no serialisation needed.
@@ -95,7 +102,9 @@ _phys_params = {
 
 # ── Shared memory layout ───────────────────────────────────────────────────────
 # shm_targets  : body_pos(3) + body_wxyz(4)  = 7 doubles
-# shm_q_real   : 12 absolute joint angles for ghost (q_hw + q0)
+# shm_q_target : 12 IK-solution joint angles (absolute) — written by sim thread,
+#                read by real process (send to motors) and viz thread (target ghost)
+# shm_q_real   : 12 absolute joint angles read back from hardware
 # shm_q0       : 12 settled sim joint angles — the zero reference offset
 #                written by main after sim settles; real process waits for it
 # shm_real_hz / shm_sim_hz : scalar rate monitors
@@ -159,33 +168,19 @@ def real_process_fn(
     control_hz: int,
     device: str,
     shm_q_real: mp.Array,
-    shm_targets: mp.Array,
+    shm_q_target: mp.Array,
     shm_q0: mp.Array,
     shm_real_hz: mp.Array,
     connect_event: mp.Event,
     stop_event: mp.Event,
 ):
-    """Waits for q0 offset and GUI connect, then runs IK+hardware loop at control_hz."""
+    """Waits for q0 offset and GUI connect, then forwards shm_q_target to hardware."""
     import sys as _sys
     _sys.path.insert(0, str(_HERE))
     _sys.path.insert(0, str(_SIM2REAL))
-    import mujoco as _mj
-    import mink as _mink
     import numpy as _np_mod
 
     dt = 1.0 / control_hz
-
-    model = _mj.MjModel.from_xml_path(str(_SCENE_XML))
-    data  = _mj.MjData(model)
-    _mj.mj_resetDataKeyframe(model, data, model.key("home").id)
-    _mj.mj_forward(model, data)
-
-    configuration_real = _mink.Configuration(model)
-    configuration_real.update(data.qpos)
-
-    base_task, posture_task, foot_tasks = build_ik_tasks(model)
-    posture_task.set_target_from_configuration(configuration_real)
-    body_mocap_id = model.body("body_target").mocapid[0]
 
     # Wait for main to write the settled sim q0 offset
     print("[real] Waiting for sim to settle (q0)…")
@@ -196,17 +191,6 @@ def real_process_fn(
         time.sleep(0.05)
     if stop_event.is_set():
         return
-
-    # Set foot targets from settled sim pose (q0), not raw keyframe
-    data.qpos[7:] = q0
-    _mj.mj_kinematics(model, data)
-    for task, fname in zip(foot_tasks, ["FL", "FR", "BL", "BR"]):
-        pos = data.site(model.site(fname).id).xpos.copy()
-        task.set_target(_mink.SE3.from_translation(pos))
-    # Reset data body pose back for IK use
-    _mj.mj_resetDataKeyframe(model, data, model.key("home").id)
-    data.qpos[7:] = q0
-    configuration_real.update(data.qpos)
 
     print("[real] Waiting for Connect button in GUI…")
     connect_event.wait()
@@ -227,28 +211,17 @@ def real_process_fn(
         while not stop_event.is_set():
             t = time.time()
 
-            # Read hardware (relative to Dynamixel zero = physical sitting pose)
-            # Add q0 offset to convert to absolute joint angles matching sim frame
+            # Read back hardware positions → absolute angles for real ghost
             pos_dict = hw.get_joint_positions_rad()
             if pos_dict is not None:
-                q_hw   = _np_mod.array([pos_dict.get(n, 0.0) for n in JOINT_NAMES])
-                q_abs  = q_hw + q0                  # absolute = hw_relative + offset
-                _np(shm_q_real)[:] = q_abs          # ghost uses absolute angles
-                full_qpos = data.qpos.copy()
-                full_qpos[7:] = q_abs
-                configuration_real.update(full_qpos)
+                q_hw  = _np_mod.array([pos_dict.get(n, 0.0) for n in JOINT_NAMES])
+                q_abs = q_hw + q0           # absolute = hw_relative + offset
+                _np(shm_q_real)[:] = q_abs
 
-            # Apply body target from shared memory
-            tgt = _np(shm_targets).copy()
-            data.mocap_pos[body_mocap_id]  = tgt[0:3]
-            data.mocap_quat[body_mocap_id] = tgt[3:7]
-
-            # Solve IK → subtract q0 offset before sending to motors
-            # (motors expect values relative to their own zero = sitting pose)
-            solve_ik(configuration_real, base_task, posture_task, foot_tasks,
-                     data, dt, body_mocap_id)
-            q_cmd_abs = configuration_real.q[7:]
-            q_cmd_hw  = q_cmd_abs - q0              # relative to Dynamixel zero
+            # Forward IK target from sim thread → motors
+            # shm_q_target holds absolute angles; motors expect relative to q0
+            q_cmd_abs = _np(shm_q_target).copy()
+            q_cmd_hw  = q_cmd_abs - q0      # relative to Dynamixel zero
             hw.set_joint_positions_rad({n: float(q_cmd_hw[i]) for i, n in enumerate(JOINT_NAMES)})
 
             iters += 1
@@ -279,6 +252,7 @@ def sim_thread_fn(
     foot_tasks: list,
     body_mocap_id: int,
     shm_targets: mp.Array,
+    shm_q_target: mp.Array,
     shm_sim_hz: mp.Array,
     stop_event: threading.Event,
 ):
@@ -309,7 +283,11 @@ def sim_thread_fn(
         solve_ik(configuration, base_task, posture_task, foot_tasks,
                  data, dt, body_mocap_id, [])
 
-        data.ctrl[:] = configuration.q[7:]
+        # Publish IK result — shared with real process and viz thread
+        q_ik = configuration.q[7:].copy()
+        _np(shm_q_target)[:] = q_ik
+
+        data.ctrl[:] = q_ik
         for _ in range(n_substeps):
             mujoco.mj_step(model, data)
 
@@ -327,48 +305,68 @@ def sim_thread_fn(
 
 # ── Viz thread ─────────────────────────────────────────────────────────────────
 
-def viz_thread_fn(
-    sim_view:  object,
-    real_view: object,
+def _place_ghost_by_foot_centroid(
     model: mujoco.MjModel,
-    data_sim:  mujoco.MjData,
-    data_real: mujoco.MjData,
-    shm_q_real: mp.Array,
+    data: mujoco.MjData,
+    q_joints: np.ndarray,
+    sim_foot_centroid: np.ndarray,
+    foot_ids: list,
+) -> None:
+    """Set ghost joint angles and shift body so its foot centroid matches sim."""
+    data.qpos[7:]  = q_joints
+    data.qpos[3:7] = [1.0, 0.0, 0.0, 0.0]
+    data.qpos[0:3] = [0.0, 0.0, 0.2]          # trial position
+    mujoco.mj_kinematics(model, data)
+    ghost_centroid = np.mean([data.site(sid).xpos for sid in foot_ids], axis=0)
+    data.qpos[0:3] += sim_foot_centroid - ghost_centroid
+    mujoco.mj_kinematics(model, data)
+
+
+def viz_thread_fn(
+    sim_view:    object,
+    target_view: object,
+    real_view:   object,
+    model: mujoco.MjModel,
+    data_sim:    mujoco.MjData,
+    data_target: mujoco.MjData,
+    data_real:   mujoco.MjData,
+    shm_q_target: mp.Array,
+    shm_q_real:   mp.Array,
     stop_event: threading.Event,
 ):
-    """Updates viser at VIZ_HZ.
+    """Updates viser at VIZ_HZ for all three robots.
 
-    Ghost body pose is found each frame by matching the centroid of the 4 ghost
-    foot sites to the centroid of the 4 sim foot sites (3D shift only, no rotation).
-    This makes all 4 foot sites of ghost overlap with sim foot sites.
+    All ghosts use foot-centroid matching: body is shifted so their foot
+    centroid aligns with the sim foot centroid (translation only, no rotation).
+
+      target (green) : IK solution — ideal pose the controller requests
+      sim    (grey)  : MuJoCo physics response to those targets
+      real   (blue)  : actual hardware joint angles read back
     """
-    period    = 1.0 / VIZ_HZ
-    foot_ids  = [model.site(f).id for f in ["FL", "FR", "BL", "BR"]]
+    period   = 1.0 / VIZ_HZ
+    foot_ids = [model.site(f).id for f in ["FL", "FR", "BL", "BR"]]
 
     while not stop_event.is_set():
         t = time.time()
 
+        # ── Sim (grey) ─────────────────────────────────────────────────────────
         mujoco.mj_kinematics(model, data_sim)
         sim_view.update(data_sim)
 
-        # Get current sim foot site positions (4x3)
         sim_foot_centroid = np.mean(
             [data_sim.site(sid).xpos for sid in foot_ids], axis=0
         )
 
-        # Set ghost joint angles, upright orientation, trial body position
-        q_real = _np(shm_q_real).copy()
-        data_real.qpos[7:]  = q_real
-        data_real.qpos[3:7] = [1.0, 0.0, 0.0, 0.0]
-        data_real.qpos[0:3] = [0.0, 0.0, 0.2]   # trial position
-        mujoco.mj_kinematics(model, data_real)
+        # ── Target (green) ─────────────────────────────────────────────────────
+        q_target = _np(shm_q_target).copy()
+        _place_ghost_by_foot_centroid(model, data_target, q_target,
+                                      sim_foot_centroid, foot_ids)
+        target_view.update(data_target)
 
-        # Shift body so ghost foot centroid matches sim foot centroid
-        ghost_foot_centroid = np.mean(
-            [data_real.site(sid).xpos for sid in foot_ids], axis=0
-        )
-        data_real.qpos[0:3] += sim_foot_centroid - ghost_foot_centroid
-        mujoco.mj_kinematics(model, data_real)
+        # ── Real (blue) ────────────────────────────────────────────────────────
+        q_real = _np(shm_q_real).copy()
+        _place_ghost_by_foot_centroid(model, data_real, q_real,
+                                      sim_foot_centroid, foot_ids)
         real_view.update(data_real)
 
         elapsed = time.time() - t
@@ -386,11 +384,12 @@ def main():
     args = parser.parse_args()
 
     # ── Shared memory ──────────────────────────────────────────────────────────
-    shm_targets = mp.Array(ctypes.c_double, _N_TARGET)
-    shm_q_real  = mp.Array(ctypes.c_double, N_JOINTS)
-    shm_q0      = mp.Array(ctypes.c_double, N_JOINTS)   # settled sim joint offset
-    shm_real_hz = mp.Array(ctypes.c_double, 1)
-    shm_sim_hz  = mp.Array(ctypes.c_double, 1)
+    shm_targets  = mp.Array(ctypes.c_double, _N_TARGET)
+    shm_q_target = mp.Array(ctypes.c_double, N_JOINTS)  # IK solution → real + viz
+    shm_q_real   = mp.Array(ctypes.c_double, N_JOINTS)  # hardware readback → viz
+    shm_q0       = mp.Array(ctypes.c_double, N_JOINTS)  # settled sim offset
+    shm_real_hz  = mp.Array(ctypes.c_double, 1)
+    shm_sim_hz   = mp.Array(ctypes.c_double, 1)
 
     connect_mp = mp.Event()
     stop_mp    = mp.Event()
@@ -399,20 +398,23 @@ def main():
     real_proc = mp.Process(
         target=real_process_fn,
         args=(args.control_hz, args.device,
-              shm_q_real, shm_targets, shm_q0, shm_real_hz, connect_mp, stop_mp),
+              shm_q_real, shm_q_target, shm_q0, shm_real_hz, connect_mp, stop_mp),
         daemon=True,
     )
     real_proc.start()
 
     # ── Load MuJoCo model ─────────────────────────────────────────────────────
     print("Loading MuJoCo model…")
-    model     = mujoco.MjModel.from_xml_path(str(_SCENE_XML))
-    data_sim  = mujoco.MjData(model)
-    data_real = mujoco.MjData(model)
+    model        = mujoco.MjModel.from_xml_path(str(_SCENE_XML))
+    data_sim     = mujoco.MjData(model)
+    data_target  = mujoco.MjData(model)
+    data_real    = mujoco.MjData(model)
 
-    mujoco.mj_resetDataKeyframe(model, data_sim,  model.key("home").id)
-    mujoco.mj_resetDataKeyframe(model, data_real, model.key("home").id)
+    mujoco.mj_resetDataKeyframe(model, data_sim,    model.key("home").id)
+    mujoco.mj_resetDataKeyframe(model, data_target, model.key("home").id)
+    mujoco.mj_resetDataKeyframe(model, data_real,   model.key("home").id)
     mujoco.mj_forward(model, data_sim)
+    mujoco.mj_forward(model, data_target)
     mujoco.mj_forward(model, data_real)
 
     body_mocap_id = model.body("body_target").mocapid[0]
@@ -447,7 +449,7 @@ def main():
         args=(model, data_sim, configuration,
               base_task, posture_task, foot_tasks,
               body_mocap_id,
-              shm_targets, shm_sim_hz, th_stop),
+              shm_targets, shm_q_target, shm_sim_hz, th_stop),
     ).start()
 
     print("Waiting for sim to settle…")
@@ -455,8 +457,9 @@ def main():
 
     # Snapshot settled sim joint angles as q0 offset
     q0 = data_sim.qpos[7:].copy()
-    _np(shm_q0)[:] = q0          # unblocks real process
-    _np(shm_q_real)[:] = q0      # ghost starts at settled sim pose
+    _np(shm_q0)[:] = q0           # unblocks real process
+    _np(shm_q_target)[:] = q0     # target ghost starts at settled sim pose
+    _np(shm_q_real)[:] = q0       # real ghost starts at settled sim pose
 
     # Now set foot targets from the settled sim foot positions
     mujoco.mj_kinematics(model, data_sim)
@@ -468,10 +471,11 @@ def main():
 
     # ── Viser ─────────────────────────────────────────────────────────────────
     print("Starting viser…")
-    server    = viser.ViserServer(label="Rumi Sim2Real")
-    scene     = ViserMujocoScene.create(server, model)
-    sim_view  = scene.add_robot("sim",  color=(0.75, 0.75, 0.75, 1.00))
-    real_view = scene.add_robot("real", color=(0.20, 0.55, 0.90, 0.65))
+    server      = viser.ViserServer(label="Rumi Sim2Real")
+    scene       = ViserMujocoScene.create(server, model)
+    sim_view    = scene.add_robot("sim",    color=(0.75, 0.75, 0.75, 1.00))
+    target_view = scene.add_robot("target", color=(0.20, 0.80, 0.20, 0.80))
+    real_view   = scene.add_robot("real",   color=(0.20, 0.55, 0.90, 0.65))
     scene.create_visualization_gui(
         camera_distance=1.2, camera_azimuth=135.0, camera_elevation=25.0
     )
@@ -517,8 +521,9 @@ def main():
     # ── Viz thread ────────────────────────────────────────────────────────────
     threading.Thread(
         target=viz_thread_fn, daemon=True,
-        args=(sim_view, real_view, model, data_sim, data_real,
-              shm_q_real, th_stop),
+        args=(sim_view, target_view, real_view,
+              model, data_sim, data_target, data_real,
+              shm_q_target, shm_q_real, th_stop),
     ).start()
 
     # ── Main loop (60 Hz) ─────────────────────────────────────────────────────
