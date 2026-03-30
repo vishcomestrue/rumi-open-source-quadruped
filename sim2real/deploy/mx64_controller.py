@@ -427,10 +427,14 @@ class MX64Controller:
     ADDR_PRESENT_TEMPERATURE = 146
 
     # Data sizes
-    LEN_GOAL_POSITION = 4
+    LEN_GOAL_POSITION    = 4
     LEN_PRESENT_POSITION = 4
-    LEN_PRESENT_CURRENT = 2
-    LEN_PRESENT_VOLTAGE = 2
+    LEN_PRESENT_VELOCITY = 4
+    LEN_PRESENT_CURRENT  = 2
+    LEN_PRESENT_VOLTAGE  = 2
+    # Combined velocity+position read (contiguous: 128–135)
+    LEN_VEL_AND_POS      = 8
+    VELOCITY_TO_RAD_S    = 0.229 * 2.0 * 3.141592653589793 / 60.0  # ≈ 0.02398 rad/s per unit
 
     # Protocol settings
     PROTOCOL_VERSION = 2.0
@@ -1503,12 +1507,12 @@ class MX64Controller:
 
         self._sync_motor_ids = list(motor_ids)
 
-        # Initialize GroupSyncRead for position
+        # Initialize GroupSyncRead spanning velocity+position (addr 128, 8 bytes)
         self._sync_read_position = GroupSyncRead(
             self.port_handler,
             self.packet_handler,
-            self.ADDR_PRESENT_POSITION,
-            self.LEN_PRESENT_POSITION
+            self.ADDR_PRESENT_VELOCITY,
+            self.LEN_VEL_AND_POS
         )
 
         # Initialize GroupSyncWrite for position
@@ -1662,6 +1666,81 @@ class MX64Controller:
 
         self.stats['read_errors'] += 1
         return None
+
+    def sync_read_positions_and_velocities(
+        self, max_retries: int = 3, retry_delay: float = 0.005
+    ):
+        """Read positions AND velocities from all registered motors in ONE packet.
+
+        Uses the combined 8-byte GroupSyncRead (addr 128–135) initialized in
+        init_sync().
+
+        Returns:
+            (pos_dict, vel_dict) where pos_dict is {motor_id: raw_ticks} and
+            vel_dict is {motor_id: velocity_rad_s}, or (None, None) on error.
+        """
+        if self._sync_read_position is None:
+            print("[ERROR] Sync not initialized. Call init_sync() first.")
+            return None, None
+
+        self.stats['read_count'] += 1
+
+        for attempt in range(max_retries):
+            self.port_handler.clearPort()
+            result = self._sync_read_position.txRxPacket()
+
+            if result != COMM_SUCCESS:
+                if attempt < max_retries - 1:
+                    time.sleep(retry_delay)
+                    continue
+                else:
+                    print(f"[ERROR] Sync read failed after {max_retries} attempts: "
+                          f"{self.packet_handler.getTxRxResult(result)}")
+                    self.stats['read_errors'] += 1
+                    return None, None
+
+            positions  = {}
+            velocities = {}
+            all_available = True
+
+            for mid in self._sync_motor_ids:
+                pos_ok = self._sync_read_position.isAvailable(
+                    mid, self.ADDR_PRESENT_POSITION, self.LEN_PRESENT_POSITION
+                )
+                vel_ok = self._sync_read_position.isAvailable(
+                    mid, self.ADDR_PRESENT_VELOCITY, self.LEN_PRESENT_VELOCITY
+                )
+                if not pos_ok or not vel_ok:
+                    if attempt < max_retries - 1:
+                        all_available = False
+                        break
+                    else:
+                        print(f"[ERROR] Data not available for motor {mid} after {max_retries} attempts")
+                        self.stats['read_errors'] += 1
+                        return None, None
+
+                pos_raw = self._sync_read_position.getData(
+                    mid, self.ADDR_PRESENT_POSITION, self.LEN_PRESENT_POSITION
+                )
+                if self.is_extended_position_mode(mid) and pos_raw > 2147483647:
+                    pos_raw -= 4294967296
+
+                vel_raw = self._sync_read_position.getData(
+                    mid, self.ADDR_PRESENT_VELOCITY, self.LEN_PRESENT_VELOCITY
+                )
+                if vel_raw > 2147483647:
+                    vel_raw -= 4294967296
+
+                positions[mid]  = pos_raw
+                velocities[mid] = vel_raw * self.VELOCITY_TO_RAD_S
+
+            if all_available:
+                return positions, velocities
+
+            time.sleep(retry_delay)
+
+        self.stats['read_errors'] += 1
+        return None, None
 
     def sync_write_positions_degrees(self, degrees_dict):
         """
