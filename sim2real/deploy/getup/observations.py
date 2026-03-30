@@ -31,10 +31,6 @@ JOINT_ORDER = [
 _H_MIN = 0.10
 _H_MAX = 0.25
 
-# Target standing height in metres. Normalized value fed to the policy.
-# Training curriculum play range: [0.20, 0.30] m → use 0.25 (normalizes to 1.0).
-TARGET_HEIGHT_M = 0.25
-_TARGET_HEIGHT_OBS = float((TARGET_HEIGHT_M - _H_MIN) / (_H_MAX - _H_MIN))   # = 1.0
 
 
 # ---------------------------------------------------------------------------
@@ -87,6 +83,7 @@ def build_obs(
     joint_vel_dict: dict,
     quat_wxyz: np.ndarray,
     last_action: np.ndarray,
+    target_height_m: float = 0.25,
 ) -> np.ndarray:
     """Assemble the 41-dim observation vector.
 
@@ -97,6 +94,7 @@ def build_obs(
         quat_wxyz:      IMU quaternion [4] in (w, x, y, z) convention.
         last_action:    Raw policy output from the previous step [12].
                         Pass np.zeros(12) at t=0.
+        target_height_m: Target standing height in metres (default: 0.25).
 
     Returns:
         obs: float32 np.ndarray of shape [41].
@@ -108,12 +106,15 @@ def build_obs(
     raw_h = _estimate_body_height(joint_pos, quat_wxyz)
     body_height_obs = float(np.clip((raw_h - _H_MIN) / (_H_MAX - _H_MIN), -0.5, 1.5))
 
+    # target height
+    target_height_obs = float((target_height_m - _H_MIN) / (_H_MAX - _H_MIN))
+
     # projected gravity
     proj_grav = _projected_gravity(quat_wxyz)
 
     obs = np.concatenate([
         [body_height_obs],           # [1]
-        [_TARGET_HEIGHT_OBS],        # [1]
+        [target_height_obs],         # [1]
         proj_grav,                   # [3]
         joint_pos,                   # [12]
         joint_vel,                   # [12]

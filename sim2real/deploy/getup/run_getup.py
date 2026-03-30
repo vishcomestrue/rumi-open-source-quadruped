@@ -11,6 +11,7 @@ Usage:
     python run_getup.py --duration 10          # longer run
     python run_getup.py --no-imu               # skip IMU (uses identity quat)
     python run_getup.py --dry-run              # motors silent, just print actions
+    python run_getup.py --target 0.18          # use 0.18 m as target height
 """
 
 import argparse
@@ -39,32 +40,7 @@ from observations import build_obs, JOINT_ORDER
 CONTROL_HZ   = 50
 DT           = 1.0 / CONTROL_HZ
 ACTION_SCALE = 0.075          # rad per unit — 0.25 * effort_limit(6) / stiffness(20)
-# ACTION_SCALE = 0.25          # rad per unit — 0.25 * effort_limit(6) / stiffness(20)
 DEFAULT_CKPT = _HERE / "checkpoint" / "latest_getup.pt"
-
-
-# ---------------------------------------------------------------------------
-# Velocity helper — GroupSync read is position-only, so we finite-difference.
-# ---------------------------------------------------------------------------
-class VelocityEstimator:
-    def __init__(self):
-        self._prev_pos: dict | None = None
-        self._prev_t: float | None  = None
-
-    def update(self, pos_dict: dict, t: float) -> dict:
-        if self._prev_pos is None or self._prev_t is None:
-            self._prev_pos = pos_dict.copy()
-            self._prev_t   = t
-            return {j: 0.0 for j in JOINT_ORDER}
-
-        dt = t - self._prev_t
-        if dt <= 0:
-            return {j: 0.0 for j in JOINT_ORDER}
-
-        vel = {j: (pos_dict[j] - self._prev_pos[j]) / dt for j in JOINT_ORDER}
-        self._prev_pos = pos_dict.copy()
-        self._prev_t   = t
-        return vel
 
 
 # ---------------------------------------------------------------------------
@@ -80,6 +56,8 @@ def main():
                         help="Do not send commands to motors (print actions only)")
     parser.add_argument("--no-imu",     action="store_true",
                         help="Skip IMU — use identity quaternion (for testing without IMU)")
+    parser.add_argument("--target",     type=float, default=0.25,
+                        help="Target standing height in metres (default: 0.25)")
     args = parser.parse_args()
 
     max_steps = int(args.duration * CONTROL_HZ)
@@ -91,6 +69,7 @@ def main():
     print(f"  Duration   : {args.duration:.1f} s  ({max_steps} steps @ {CONTROL_HZ} Hz)")
     print(f"  Dry run    : {args.dry_run}")
     print(f"  IMU        : {'disabled (identity quat)' if args.no_imu else 'enabled'}")
+    print(f"  Target ht  : {args.target:.3f} m")
     print()
 
     # ------------------------------------------------------------------
@@ -144,16 +123,23 @@ def main():
     }
     RADIANS_TO_POS = 4096.0 / (2.0 * np.pi)
 
-    def read_joint_positions() -> dict:
-        """Read positions relative to sit-pose zero, in radians."""
-        raw = controller.sync_read_positions()
-        if raw is None:
-            return None
-        result = {}
+    def read_joint_states() -> tuple:
+        """Read positions and velocities from hardware.
+
+        Returns:
+            (pos_dict, vel_dict) — joint-name keyed dicts, positions in rad
+            relative to sit-pose zero, velocities in rad/s.
+            Returns (None, None) on read failure.
+        """
+        raw_pos, raw_vel = controller.sync_read_positions_and_velocities()
+        if raw_pos is None:
+            return None, None
+        pos_dict = {}
+        vel_dict = {}
         for joint, mid in JOINT_ID_MAP.items():
-            offset_ticks = raw[mid] - zero_pos[mid]
-            result[joint] = offset_ticks / RADIANS_TO_POS
-        return result
+            pos_dict[joint] = (raw_pos[mid] - zero_pos[mid]) / RADIANS_TO_POS
+            vel_dict[joint] = raw_vel[mid]
+        return pos_dict, vel_dict
 
     def write_joint_positions(pos_rad_dict: dict) -> None:
         """Write target positions (offsets from sit-pose zero) in radians."""
@@ -170,14 +156,14 @@ def main():
     _dummy_pos = {j: 0.0 for j in JOINT_ORDER}
     _dummy_vel = {j: 0.0 for j in JOINT_ORDER}
     _dummy_q   = np.array([1.0, 0.0, 0.0, 0.0], dtype=np.float32)
-    _dummy_obs = build_obs(_dummy_pos, _dummy_vel, _dummy_q, np.zeros(12, dtype=np.float32))
+    _dummy_obs = build_obs(_dummy_pos, _dummy_vel, _dummy_q, np.zeros(12, dtype=np.float32), args.target)
     policy(_dummy_obs)
     print("[WARMUP] Done.\n")
 
+    # ------------------------------------------------------------------
     # 5. Control loop
     # ------------------------------------------------------------------
-    vel_estimator = VelocityEstimator()
-    last_action   = np.zeros(12, dtype=np.float32)
+    last_action = np.zeros(12, dtype=np.float32)
 
     print("\n" + "=" * 60)
     print("   Starting control loop — Ctrl+C to stop")
@@ -193,16 +179,14 @@ def main():
 
             # --- Read hardware ---
             if not args.dry_run:
-                pos_dict = read_joint_positions()
+                pos_dict, vel_dict = read_joint_states()
                 if pos_dict is None:
                     print(f"[WARNING] Step {step}: motor read failed, skipping.")
                     time.sleep(DT)
                     continue
             else:
                 pos_dict = {j: 0.0 for j in JOINT_ORDER}
-
-            now = time.time()
-            vel_dict = vel_estimator.update(pos_dict, now)
+                vel_dict = {j: 0.0 for j in JOINT_ORDER}
 
             if imu is not None:
                 quat = imu.read_quaternion()
@@ -210,7 +194,7 @@ def main():
                 quat = np.array([1.0, 0.0, 0.0, 0.0], dtype=np.float32)
 
             # --- Build obs ---
-            obs = build_obs(pos_dict, vel_dict, quat, last_action)
+            obs = build_obs(pos_dict, vel_dict, quat, last_action, args.target)
 
             # --- Policy inference ---
             raw_action = policy(obs)   # [12], unscaled
