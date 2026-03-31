@@ -1,0 +1,262 @@
+<mujoco model="Rumi Quadruped">
+  <compiler angle="radian" meshdir="assets" eulerseq="zyx"/>
+
+  <option timestep="0.001" gravity="0 0 -9.81" />
+
+  <!-- <option iterations="1" ls_iterations="5" timestep="0.004" integrator="Euler">
+    <flag eulerdamp="disable"/>
+  </option> -->
+
+  <!-- Global Settings -->
+  <default>
+    <default class="rumi">
+      <!-- This globaly disables all collisions. -->
+      <geom condim="1" contype="0" conaffinity="0"/>
+      <!-- Joint damping and armature provide numerical stability -->
+      <!-- <joint pos="0 0 0" axis="0 1 0" damping="0.5" armature="0.005" frictionloss="0.1"/> -->
+      <!-- The below values are obtained from the BAM repo -->
+      <!-- <joint pos="0 0 0" axis="0 1 0" armature="0.012" damping="0.66" frictionloss="0.09"/> -->
+      <!-- AFTER OUR SYSTEM IDENTIFICATION -->
+      <joint pos="0 0 0" axis="0 1 0" armature="0.01623" damping="0.59436" frictionloss="0.001"/>
+      <!-- kp: position gain, kv: velocity gain (derivative damping), forcerange: actuator limits -->
+      <position inheritrange="1" kp="20.0" kv="0" forcerange="-6.0 6.0"/>
+      <!-- Joint ranges and constants for section of legs -->
+      <default class="hip">
+        <joint axis="1 0 0"/>
+      </default>
+      <default class="thigh">
+        <joint axis="0 1 0"/>
+      </default>
+      <default class="calf">
+        <joint axis="0 1 0"/>
+      </default>
+      <!-- Visual Meshes -->
+      <default class="visual">
+        <geom type="mesh" contype="0" conaffinity="0" group="2" material="dark"/>
+      </default>
+      <!-- Collision Meshes -->
+      <default class="collision">
+        <geom group="3" type="capsule" contype="1" conaffinity="1" condim="3"/>
+
+        <!-- Upper Leg/Thigh Collisions -->
+        <default class="upper_leg_collision1">
+          <geom size="0.025" fromto="0 0 0 -0.16 0 0.005"/>
+        </default>
+        <default class="upper_leg_collision2">
+          <geom size="0.025" fromto="-0.16 0 0.005 -0.20 0 -0.038"/>
+        </default>
+
+        <!-- Lower Leg/Calf Collisions -->
+        <default class="lower_leg_collision1">
+          <geom size="0.02" fromto="0 0 -0.0025 0.13 0 -0.016"/>
+        </default>
+        <default class="lower_leg_collision2">
+          <geom size="0.02" fromto="0.14 0 -0.018 0.18 0 -0.035"/>
+        </default>
+
+        <!-- Foot -->
+        <default class="foot">
+          <!--
+          This specific line enables collisions for the feet only.
+          contype=1 conaffinity=1 allows feet to collide with the floor and other bodies.
+          -->
+          <!-- solimp: [dmin dmax width] - contact impedance parameters -->
+          <geom type="sphere" size="0.02" pos="0.20216 0 -0.04446" solimp="0.9 .95 0.022" contype="1" conaffinity="1" condim="3"/>
+        </default>
+      </default>
+      <!-- <site size="0.001" rgba="0.9 0.9 0.9 0.1" group="4"/> -->
+    </default>
+  </default>
+
+  <asset>
+    <!-- Materials -->
+    <material name="dark" rgba="0 0 0 1"/>
+    <material name="upvector_arrow" rgba="0.0 1.0 0.0 1.0" />
+    <material name="body_mat" rgba="0.2 0.2 0.2 1"/>
+    <material name="coupler_mat" rgba="0.2 0.2 0.2 1"/>
+    <material name="thigh_mat" rgba="0.2 0.2 0.2 1"/>
+    <material name="calf_mat" rgba="0.2 0.2 0.2 1"/>
+    <!-- Meshes -->
+    <mesh class="rumi" name="body" file="body_with_motor_v2_simple.obj" scale="0.001 0.001 0.001"/>
+    <mesh class="rumi" name="coupler" file="coupler_v2.stl" scale="0.001 0.001 0.001"/>
+    <mesh class="rumi" name="thigh" file="upper_leg_with_motor_v2_simple.obj" scale="0.001 0.001 0.001"/>
+    <mesh class="rumi" name="calf" file="lower_leg_v2_simple.obj" scale="0.001 0.001 0.001"/>
+  </asset>
+
+  <worldbody>
+    <!-- <light name="spotlight" mode="targetbodycom" target="body" pos="0 -1 2"/> -->
+    <body name="body" pos="0 0 0.04" quat="1 0 0 0" childclass="rumi">
+      <!-- TODO: Add camera views -->
+      <camera name="side" pos="-0.214 -1.257 0.053" xyaxes="1.000 -0.013 -0.000 -0.000 -0.004 1.000" mode="trackcom"/>
+      <inertial pos="-0.140 -0.054 0" quat="1 0 0 0" mass="0.8" diaginertia="0.0001 0.002 0.002"/>
+      <freejoint/>
+      <geom class="visual" mesh="body" material="body_mat"/>
+      <!-- Body Collision -->
+      <geom name="body_collision1" class="collision" size="0.04" fromto="0.0 -0.054 0 -0.28 -0.054 0" type="capsule"/>
+      <geom name="body_collision2" class="collision" size="0.035" fromto="0.0 -0.1 0 0.0 -0.01 0" type="capsule"/>
+      <geom name="body_collision3" class="collision" size="0.035" fromto="-0.28 -0.1 0 -0.28 -0.01 0" type="capsule"/>
+      <!-- <geom class="collision" size="0.04" fromto="0.0 -0.054 0 -0.28 -0.054 0" type="capsule"/> -->
+      
+      <!-- Extra weight representing components, can also be used to move the COM forwards -->
+      <!-- <body name="HEAD" pos="0.0 -0.054 0.045" quat="1 0 0 0">
+        <geom type="box" size="0.02 0.02 0.02" material="body_mat"/>
+        <inertial pos="0 0 0" mass="0.8" diaginertia="0.0001 0.002 0.002"/>
+      </body> -->
+      
+      <site name="body_mid" pos="-0.140 -0.054 0" quat="1 0 0 0" size="0.01" rgba="1 0 0 1"/>
+      <!-- TODO: Add sites for IMU and other sensors if required -->
+      <site name="imu" pos="-0.20 -0.055 0.037" quat="1 0 0 0" type="box" size="0.018 0.012 0.002" rgba="1 0 0 1"/>
+      
+      <!-- Upvector arrow visualization -->
+      <!-- <geom name="upvector_arrow" type="cylinder" size="0.005 0.08" pos="-0.174 -0.054 0.08"
+            material="upvector_arrow" contype="0" conaffinity="0" group="2" />
+      <geom name="upvector_arrowhead" type="cylinder" size="0.015 0.02" pos="-0.174 -0.054 0.18"
+            material="upvector_arrow" contype="0" conaffinity="0" group="2" /> -->
+
+      <!-- Front Left Leg -->
+      <body name="FL_hip" pos="0 0 0" quat="1 0 0 0">
+        <inertial pos="0 0.016 0" quat="1 0 0 0" mass="0.01" diaginertia="0.0001 0.0001 0.0001"/>
+        <joint class="hip" name="FL_hip_joint" range="-0.52 0.48"/>
+        <geom class="visual" mesh="coupler" material="coupler_mat"/>
+        <!-- <site name="FL_hip_com" pos="0 0.016 0" quat="1 0 0 0" size="0.01" rgba="1 0 0 1"/> -->
+        <body name="FL_thigh" pos="0 0.0595 0">
+          <inertial pos="-0.10348 -0.0014 0.000274" quat="1 0 0 0" mass="0.340" diaginertia="0.00003 0.0002 0.0002"/>
+          <joint class="thigh" name="FL_thigh_joint" range="-1.22 0.68"/>
+          <geom class="visual" mesh="thigh" material="thigh_mat"/>
+          <!-- Thigh/Upper Leg Collisions -->
+          <geom name="FL_thigh_collision1" class="upper_leg_collision1"/>
+          <geom name="FL_thigh_collision2" class="upper_leg_collision2"/>
+          <!-- <site name="FL_thigh_com" pos="-0.10348 -0.0014 0.000274" quat="1 0 0 0" size="0.01" rgba="1 0 0 1"/> -->
+          <body name="FL_calf" pos="-0.20214 0 -0.038" quat="1 0 0 0">
+            <inertial pos="0.1222 -0.01698 0" quat="1 0 0 0" mass="0.058" diaginertia="0.00003 0.0002 0.0002"/>
+            <joint class="calf" name="FL_calf_joint" axis="0 -1 0" range="-1.51 0.1"/>
+            <geom class="visual" mesh="calf" material="calf_mat"/>
+            <!-- Calf/Lower Leg Collisions -->
+            <geom name="FL_calf_collision1" class="lower_leg_collision1"/>
+            <geom name="FL_calf_collision2" class="lower_leg_collision2"/>
+            <geom name="FL_foot_collision" class="foot"/>
+            <!-- <site name="FL_calf_com" pos="0.1222 -0.01698 0" quat="1 0 0 0" size="0.01" rgba="1 0 0 1"/> -->
+            <site name="FL" pos="0.20216 0 -0.04446" size="0.02"/>
+          </body>
+        </body>
+      </body>
+
+      <!-- Front Right Leg -->
+      <body name="FR_hip" pos="0 -0.1096 0" quat="0 1 0 0">
+        <inertial pos="0 0.016 0" quat="1 0 0 0" mass="0.01" diaginertia="0.0001 0.0001 0.0001"/>
+        <joint class="hip" name="FR_hip_joint" axis="-1 0 0" range="-0.52 0.48"/>
+        <geom class="visual" mesh="coupler" material="coupler_mat"/>
+        <body name="FR_thigh" pos="0 0.0595 0" quat="0 1 0 0">
+          <inertial pos="-0.10348 -0.0014 0.000274" quat="1 0 0 0" mass="0.340" diaginertia="0.00003 0.0002 0.0002"/>
+          <joint class="thigh" name="FR_thigh_joint" axis="0 -1 0" range="-1.22 1.22"/>
+          <geom class="visual" mesh="thigh" material="thigh_mat"/>
+          <!-- Thigh/Upper Leg Collisions -->
+          <geom name="FR_thigh_collision1" class="upper_leg_collision1"/>
+          <geom name="FR_thigh_collision2" class="upper_leg_collision2"/>
+          <body name="FR_calf" pos="-0.20214 0 -0.038" quat="1 0 0 0">
+            <inertial pos="0.1222 -0.01698 0" quat="1 0 0 0" mass="0.058" diaginertia="0.00003 0.0002 0.0002"/>
+            <joint class="calf" name="FR_calf_joint" range="-0.1 1.51"/>
+            <geom class="visual" mesh="calf" material="calf_mat"/>
+            <!-- Calf/Lower Leg Collisions -->
+            <geom name="FR_calf_collision1" class="lower_leg_collision1"/>
+            <geom name="FR_calf_collision2" class="lower_leg_collision2"/>
+            <geom name="FR_foot_collision" class="foot"/>
+            <site name="FR" pos="0.20216 0 -0.04446" size="0.02"/>
+          </body>
+        </body>
+      </body>
+
+      <!-- Back Left Leg -->
+      <body name="BL_hip" pos="-0.2806 0 0" quat="1 0 0 0">
+        <inertial pos="0 0.016 0" quat="1 0 0 0" mass="0.01" diaginertia="0.0001 0.0001 0.0001"/>
+        <joint class="hip" name="BL_hip_joint" range="-0.52 0.48"/>
+        <geom class="visual" mesh="coupler" material="coupler_mat"/>
+        <body name="BL_thigh" pos="0 0.0595 0">
+          <inertial pos="-0.10348 -0.0014 0.000274" quat="1 0 0 0" mass="0.340" diaginertia="0.00003 0.0002 0.0002"/>
+          <joint class="thigh" name="BL_thigh_joint" range="-1.22 1.22"/>
+          <geom class="visual" mesh="thigh" material="thigh_mat"/>
+          <!-- Thigh/Upper Leg Collisions -->
+          <geom name="BL_thigh_collision1" class="upper_leg_collision1"/>
+          <geom name="BL_thigh_collision2" class="upper_leg_collision2"/>
+          <body name="BL_calf" pos="-0.20214 0 -0.038" quat="1 0 0 0">
+            <inertial pos="0.1222 -0.01698 0" quat="1 0 0 0" mass="0.058" diaginertia="0.00003 0.0002 0.0002"/>
+            <joint class="calf" name="BL_calf_joint" axis="0 -1 0" range="-1.51 0.1"/>
+            <geom class="visual" mesh="calf" material="calf_mat"/>
+            <!-- Calf/Lower Leg Collisions -->
+            <geom name="BL_calf_collision1" class="lower_leg_collision1"/>
+            <geom name="BL_calf_collision2" class="lower_leg_collision2"/>
+            <geom name="BL_foot_collision" class="foot"/>
+            <site name="BL" pos="0.20216 0 -0.04446" size="0.02"/>
+          </body>
+        </body>
+      </body>
+
+
+      <!-- Back Right Leg -->
+      <body name="BR_hip" pos="-0.2806 -0.1096 0" quat="0 1 0 0">
+        <inertial pos="0 0.016 0" quat="1 0 0 0" mass="0.01" diaginertia="0.0001 0.0001 0.0001"/>
+        <joint class="hip" name="BR_hip_joint" axis="-1 0 0" range="-0.52 0.48"/>
+        <geom class="visual" mesh="coupler" material="coupler_mat"/>
+        <body name="BR_thigh" pos="0 0.0595 0" quat="0 1 0 0">
+          <inertial pos="-0.10348 -0.0014 0.000274" quat="1 0 0 0" mass="0.340" diaginertia="0.00003 0.0002 0.0002"/>
+          <joint class="thigh" name="BR_thigh_joint" axis="0 -1 0" range="-1.22 1.22"/>
+          <geom class="visual" mesh="thigh" material="thigh_mat"/>
+          <!-- Thigh/Upper Leg Collisions -->
+          <geom name="BR_thigh_collision1" class="upper_leg_collision1"/>
+          <geom name="BR_thigh_collision2" class="upper_leg_collision2"/>
+          <body name="BR_calf" pos="-0.20214 0 -0.038" quat="1 0 0 0">
+            <inertial pos="0.1222 -0.01698 0" quat="1 0 0 0" mass="0.058" diaginertia="0.00003 0.0002 0.0002"/>
+            <joint class="calf" name="BR_calf_joint" range="-0.1 1.51"/>
+            <geom class="visual" mesh="calf" material="calf_mat"/>
+            <!-- Calf/Lower Leg Collisions -->
+            <geom name="BR_calf_collision1" class="lower_leg_collision1"/>
+            <geom name="BR_calf_collision2" class="lower_leg_collision2"/>
+            <geom name="BR_foot_collision" class="foot"/>
+            <site name="BR" pos="0.20216 0 -0.04446" size="0.02"/>
+          </body>
+        </body>
+      </body>
+    </body>
+  </worldbody>
+
+  <actuator>
+    <position class="hip" name="FL_hip" joint="FL_hip_joint"/>
+    <position class="thigh" name="FL_thigh" joint="FL_thigh_joint"/>
+    <position class="calf" name="FL_calf" joint="FL_calf_joint"/>
+    <position class="hip" name="FR_hip" joint="FR_hip_joint"/>
+    <position class="thigh" name="FR_thigh" joint="FR_thigh_joint"/>
+    <position class="calf" name="FR_calf" joint="FR_calf_joint"/>
+    <position class="hip" name="BL_hip" joint="BL_hip_joint"/>
+    <position class="thigh" name="BL_thigh" joint="BL_thigh_joint"/>
+    <position class="calf" name="BL_calf" joint="BL_calf_joint"/>
+    <position class="hip" name="BR_hip" joint="BR_hip_joint"/>
+    <position class="thigh" name="BR_thigh" joint="BR_thigh_joint"/>
+    <position class="calf" name="BR_calf" joint="BR_calf_joint"/>
+  </actuator>
+
+  <sensor>
+    <!-- IMU-based sensors mounted on body -->
+    <gyro site="imu" name="imu_ang_vel"/>
+    <velocimeter site="imu" name="imu_lin_vel"/>
+    <accelerometer site="imu" name="accelerometer"/>
+    <framepos objtype="site" objname="imu" name="position"/>
+    <framezaxis objtype="site" objname="imu" name="upvector"/>
+    <framexaxis objtype="site" objname="imu" name="forwardvector"/>
+    <framelinvel objtype="site" objname="imu" name="global_linvel"/>
+    <frameangvel objtype="site" objname="imu" name="global_angvel"/>
+    <framequat objtype="site" objname="imu" name="orientation"/>
+
+    <!-- Foot velocity sensors (global frame) -->
+    <framelinvel objtype="site" objname="FR" name="FR_global_linvel"/>
+    <framelinvel objtype="site" objname="FL" name="FL_global_linvel"/>
+    <framelinvel objtype="site" objname="BR" name="BR_global_linvel"/>
+    <framelinvel objtype="site" objname="BL" name="BL_global_linvel"/>
+
+    <!-- Foot position sensors (relative to IMU) -->
+    <framepos objtype="site" objname="FR" name="FR_pos" reftype="site" refname="imu"/>
+    <framepos objtype="site" objname="FL" name="FL_pos" reftype="site" refname="imu"/>
+    <framepos objtype="site" objname="BR" name="BR_pos" reftype="site" refname="imu"/>
+    <framepos objtype="site" objname="BL" name="BL_pos" reftype="site" refname="imu"/>
+  </sensor>
+
+</mujoco>
