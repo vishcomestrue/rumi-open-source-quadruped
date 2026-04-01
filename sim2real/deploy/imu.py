@@ -11,12 +11,15 @@ class IMU:
 
     I2C latency and sensor reconnects are absorbed in the thread — the
     control loop always gets the latest valid quaternion instantly.
+    Also exposes read_accel() and read_gyro() for tasks that need them.
     """
 
     def __init__(self, i2c_address: int = 0x4b):
         print(f"[IMU] Initializing BNO080 at I2C 0x{i2c_address:02x} ...")
         self._reader = IMUReader(address=i2c_address)
-        self._quat = np.array([1.0, 0.0, 0.0, 0.0], dtype=np.float32)
+        self._quat  = np.array([1.0, 0.0, 0.0, 0.0], dtype=np.float32)
+        self._accel = np.zeros(3, dtype=np.float32)
+        self._gyro  = np.zeros(3, dtype=np.float32)
         self._lock = threading.Lock()
         self._thread = threading.Thread(target=self._run, daemon=True)
         self._thread.start()
@@ -27,8 +30,12 @@ class IMU:
             data = self._reader.read()
             if data is not None:
                 qx, qy, qz, qw = data['quaternion']   # bno080.py returns (x, y, z, w)
+                ax, ay, az = data['accel']
+                gx, gy, gz = data['gyro']
                 with self._lock:
-                    self._quat = np.array([qw, qx, qy, qz], dtype=np.float32)
+                    self._quat  = np.array([qw, qx, qy, qz], dtype=np.float32)
+                    self._accel = np.array([ax, ay, az],      dtype=np.float32)
+                    self._gyro  = np.array([gx, gy, gz],      dtype=np.float32)
             else:
                 time.sleep(0.005)   # brief pause during errors / reconnects
 
@@ -36,3 +43,18 @@ class IMU:
         """Return latest (w, x, y, z) quaternion — non-blocking."""
         with self._lock:
             return self._quat.copy()
+
+    def read_accel(self) -> np.ndarray:
+        """Return latest linear acceleration (x, y, z) in m/s² — non-blocking."""
+        with self._lock:
+            return self._accel.copy()
+
+    def read_gyro(self) -> np.ndarray:
+        """Return latest angular velocity (x, y, z) in rad/s — non-blocking."""
+        with self._lock:
+            return self._gyro.copy()
+
+    def read_all(self) -> tuple:
+        """Return (quat_wxyz, accel_xyz, gyro_xyz) atomically — non-blocking."""
+        with self._lock:
+            return self._quat.copy(), self._accel.copy(), self._gyro.copy()
