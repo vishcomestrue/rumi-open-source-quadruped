@@ -22,6 +22,11 @@ from pathlib import Path
 import numpy as np
 
 # ---------------------------------------------------------------------------
+# Recording
+# ---------------------------------------------------------------------------
+_REC_DIR = Path(__file__).resolve().parent / "recordings"
+
+# ---------------------------------------------------------------------------
 # Paths
 # ---------------------------------------------------------------------------
 _HERE = Path(__file__).resolve().parent
@@ -58,6 +63,8 @@ def main():
                         help="Skip IMU — use identity quaternion (for testing without IMU)")
     parser.add_argument("--target",     type=float, default=0.25,
                         help="Target standing height in metres (default: 0.25)")
+    parser.add_argument("--record",     action="store_true",
+                        help="Save a .npz recording to getup/recordings/ after the run")
     args = parser.parse_args()
 
     max_steps = int(args.duration * CONTROL_HZ)
@@ -70,6 +77,7 @@ def main():
     print(f"  Dry run    : {args.dry_run}")
     print(f"  IMU        : {'disabled (identity quat)' if args.no_imu else 'enabled'}")
     print(f"  Target ht  : {args.target:.3f} m")
+    print(f"  Record     : {args.record}")
     print()
 
     # ------------------------------------------------------------------
@@ -165,6 +173,13 @@ def main():
     # ------------------------------------------------------------------
     last_action = np.zeros(12, dtype=np.float32)
 
+    # Recording buffers (only allocated when --record is set)
+    if args.record:
+        rec_quat       = np.zeros((max_steps, 4),  dtype=np.float32)
+        rec_joint_pos  = np.zeros((max_steps, 12), dtype=np.float32)
+        rec_joint_vel  = np.zeros((max_steps, 12), dtype=np.float32)
+        rec_raw_action = np.zeros((max_steps, 12), dtype=np.float32)
+
     print("\n" + "=" * 60)
     print("   Starting control loop — Ctrl+C to stop")
     print("=" * 60 + "\n")
@@ -198,6 +213,13 @@ def main():
 
             # --- Policy inference ---
             raw_action = policy(obs)   # [12], unscaled
+
+            # --- Record ---
+            if args.record:
+                rec_quat[step]       = quat
+                rec_joint_pos[step]  = np.array([pos_dict[j] for j in JOINT_ORDER], dtype=np.float32)
+                rec_joint_vel[step]  = np.array([vel_dict[j] for j in JOINT_ORDER], dtype=np.float32)
+                rec_raw_action[step] = raw_action
 
             # --- Send to motors ---
             processed = raw_action * ACTION_SCALE   # [12], rad offsets from sit pose
@@ -233,6 +255,23 @@ def main():
         if controller is not None:
             controller.disconnect()
             print("[INFO] Motors disconnected.")
+
+        if args.record:
+            _REC_DIR.mkdir(parents=True, exist_ok=True)
+            rec_path = _REC_DIR / f"getup_{int(time.time())}.npz"
+            np.savez(
+                rec_path,
+                # Only save the steps that actually ran
+                quat       = rec_quat[:steps_done],
+                joint_pos  = rec_joint_pos[:steps_done],
+                joint_vel  = rec_joint_vel[:steps_done],
+                raw_action = rec_raw_action[:steps_done],
+                # Metadata
+                target_height = np.float32(args.target),
+                control_hz    = np.float32(CONTROL_HZ),
+                action_scale  = np.float32(ACTION_SCALE),
+            )
+            print(f"[REC] Saved {steps_done} steps → {rec_path}")
 
 
 if __name__ == "__main__":
