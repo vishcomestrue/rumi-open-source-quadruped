@@ -70,5 +70,7 @@ class IMUReader:
             return None
         if any(abs(v) > 35.0 for v in gyro):
             return None
+        if any(abs(v) > 39.5 for v in accel):   # BNO080 default accel range is ±4g = ±39.2 m/s²
+            return None
 
         return {'timestamp': time.time(), 'quaternion': quat, 'accel': accel, 'gyro': gyro}
