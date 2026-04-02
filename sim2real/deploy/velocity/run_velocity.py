@@ -65,6 +65,15 @@ SIT_POSE_RAD = np.array([
     -0.02, -0.28, -0.66,   # BR_hip, BR_thigh, BR_calf
 ], dtype=np.float32)
 
+# Standing pose in radians — matches env init_state joint_pos.
+# Policy outputs are offsets around this pose.
+STAND_POSE_RAD = np.array([
+     0.0,  -0.0705,  -0.113,   # FL_hip, FL_thigh, FL_calf
+     0.0,   0.0705,   0.113,   # FR_hip, FR_thigh, FR_calf
+     0.0,  -0.0705,  -0.113,   # BL_hip, BL_thigh, BL_calf
+     0.0,   0.0705,   0.113,   # BR_hip, BR_thigh, BR_calf
+], dtype=np.float32)
+
 RADIANS_TO_POS = 4096.0 / (2.0 * np.pi)
 
 # Motor ID → joint name (must match JOINT_ORDER indices)
@@ -156,7 +165,7 @@ def main():
     #   pos_rad = (raw_ticks - zero_ticks) / RADIANS_TO_POS + SIT_POSE_RAD[i]
     #
     # When all joints are at zero_ticks, pos_rad == SIT_POSE_RAD (sitting).
-    # When pos_rad == 0.0 for all joints, the robot is standing.
+    # When pos_rad == STAND_POSE_RAD, the robot is standing.
     # ------------------------------------------------------------------
     def read_joint_states() -> tuple:
         raw_pos, raw_vel = controller.sync_read_positions_and_velocities()
@@ -171,7 +180,7 @@ def main():
         return pos_dict, vel_dict
 
     def write_joint_positions(pos_rad: np.ndarray) -> None:
-        """Write target positions given as absolute rad (0 = standing)."""
+        """Write target positions given as absolute rad (STAND_POSE_RAD = standing)."""
         raw_targets = {}
         for i, joint in enumerate(JOINT_ORDER):
             mid = JOINT_ID_MAP[joint]
@@ -204,14 +213,14 @@ def main():
 
         print(f"[STANDUP] Interpolating sit → stand over {STANDUP_DURATION:.1f} s ...")
         for k in range(standup_steps):
-            alpha = (k + 1) / standup_steps           # 0 → 1
-            target = SIT_POSE_RAD * (1.0 - alpha)     # SIT_POSE_RAD → 0
+            alpha = (k + 1) / standup_steps
+            target = SIT_POSE_RAD + (STAND_POSE_RAD - SIT_POSE_RAD) * alpha
             write_joint_positions(target)
             time.sleep(DT)
 
         print(f"[STANDUP] Holding standing pose for {STANDUP_HOLD:.1f} s ...")
         for _ in range(stand_hold_steps):
-            write_joint_positions(np.zeros(12, dtype=np.float32))
+            write_joint_positions(STAND_POSE_RAD)
             time.sleep(DT)
 
         print("[STANDUP] Standing. Starting RL policy.\n")
@@ -272,9 +281,9 @@ def main():
                 rec_raw_action[step] = raw_action
 
             # --- Send to motors ---
-            processed = raw_action * ACTION_SCALE   # rad offsets from standing (0 rad)
+            processed = raw_action * ACTION_SCALE   # rad offsets around standing pose
             if not args.dry_run:
-                write_joint_positions(processed)
+                write_joint_positions(STAND_POSE_RAD + processed)
 
             # --- Store for next step ---
             last_action = raw_action
