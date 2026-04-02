@@ -266,7 +266,12 @@ def main():
             quat, accel, gyro = imu.read_all()
 
             # --- Build obs ---
-            obs = build_obs(pos_dict, vel_dict, accel, gyro, quat, last_action, command)
+            # joint_pos must be relative to default pose (= STAND_POSE_RAD), matching env
+            joint_pos_rel = {
+                j: pos_dict[j] - float(STAND_POSE_RAD[i])
+                for i, j in enumerate(JOINT_ORDER)
+            }
+            obs = build_obs(joint_pos_rel, vel_dict, accel, gyro, quat, last_action, command)
 
             # --- Policy inference ---
             raw_action = policy(obs)   # [12], unscaled
@@ -276,7 +281,7 @@ def main():
                 rec_accel[step]      = accel
                 rec_gyro[step]       = gyro
                 rec_quat[step]       = quat
-                rec_joint_pos[step]  = np.array([pos_dict[j] for j in JOINT_ORDER], dtype=np.float32)
+                rec_joint_pos[step]  = np.array([joint_pos_rel[j] for j in JOINT_ORDER], dtype=np.float32)
                 rec_joint_vel[step]  = np.array([vel_dict[j] for j in JOINT_ORDER], dtype=np.float32)
                 rec_raw_action[step] = raw_action
 

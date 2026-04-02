@@ -1,13 +1,13 @@
 """Build the 48-dim observation vector from real hardware readings.
 
 Obs layout (matches rumi_velocity training exactly):
-  [0:3]    imu_lin_acc       (3,)  — IMU accelerometer, body frame (m/s²)
-  [3:6]    base_ang_vel      (3,)  — IMU gyroscope, body frame (rad/s)
-  [6:9]    projected_gravity (3,)  — gravity in body frame via IMU quat
-  [9:21]   joint_pos         (12,) — encoder positions rel. to standing zero
-  [21:33]  joint_vel         (12,) — encoder velocities (rad/s)
-  [33:45]  actions           (12,) — last raw policy output (zeros at t=0)
-  [45:48]  command           (3,)  — [lin_vel_x, lin_vel_y, ang_vel_z]
+  [0:3]   base_ang_vel      (3,)  — IMU gyroscope, body frame (rad/s)
+  [3:6]   projected_gravity (3,)  — gravity in body frame via IMU quat
+  [6:18]  joint_pos         (12,) — encoder positions rel. to standing zero
+  [18:30] joint_vel         (12,) — encoder velocities (rad/s)
+  [30:42] actions           (12,) — last raw policy output (zeros at t=0)
+  [42:45] command           (3,)  — [lin_vel_x, lin_vel_y, ang_vel_z]
+  [45:48] imu_lin_acc       (3,)  — IMU accelerometer, body frame (m/s²)
 
 No observation normalization (obs_normalization=False in rl_cfg).
 All values are float32.
@@ -58,7 +58,7 @@ def build_obs(
     """Assemble the 48-dim observation vector.
 
     Args:
-        joint_pos_dict: {joint_name: position_rad} relative to standing zero (0 rad).
+        joint_pos_dict: {joint_name: position_rad} relative to standing zero (STAND_POSE_RAD).
         joint_vel_dict: {joint_name: velocity_rad_s}.
         accel:          IMU linear acceleration [3] (x, y, z) in m/s², body frame.
         gyro:           IMU angular velocity [3] (x, y, z) in rad/s, body frame.
@@ -75,13 +75,13 @@ def build_obs(
     proj_grav = _projected_gravity(quat_wxyz)
 
     obs = np.concatenate([
-        accel.astype(np.float32),            # [3]
-        gyro.astype(np.float32),             # [3]
-        proj_grav,                           # [3]
-        joint_pos,                           # [12]
-        joint_vel,                           # [12]
-        last_action.astype(np.float32),      # [12]
-        command.astype(np.float32),          # [3]
+        gyro.astype(np.float32),             # [3]  base_ang_vel
+        proj_grav,                           # [3]  projected_gravity
+        joint_pos,                           # [12] joint_pos
+        joint_vel,                           # [12] joint_vel
+        last_action.astype(np.float32),      # [12] actions
+        command.astype(np.float32),          # [3]  command
+        accel.astype(np.float32),            # [3]  imu_lin_acc
     ])
     assert obs.shape == (48,), f"Expected (48,), got {obs.shape}"
     return obs.astype(np.float32)
