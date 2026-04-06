@@ -22,9 +22,9 @@
   </worldbody>
 
   <keyframe>
-    <!-- sitting: all joints at 0 rad, body resting low — matches real sit-pose zero -->
+    <!-- sitting: exact settled sitting pose from sysid_rumi_visual home keyframe -->
     <key name="sitting"
-         qpos="0 0 0.04 1 0 0 0  0 0 0  0 0 0  0 0 0  0 0 0"
+         qpos="0 0 0.0834816 1 0 0 0 -0.00562671 -0.0668922 0.0917795 -0.0101164 0.0669637 -0.0931885 0.0487747 -0.0680831 0.103491 0.0481625 0.0677168 -0.103765"
          ctrl="0 0 0 0 0 0 0 0 0 0 0 0"/>
   </keyframe>
 

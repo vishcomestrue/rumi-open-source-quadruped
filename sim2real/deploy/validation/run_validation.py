@@ -163,38 +163,46 @@ def main():
 
     # ── Load MuJoCo model ─────────────────────────────────────────────────────
     print("Loading MuJoCo model …")
-    model       = mujoco.MjModel.from_xml_path(str(_SCENE_XML))
-    data_sim    = mujoco.MjData(model)
-    data_target = mujoco.MjData(model)
-    data_real   = mujoco.MjData(model)
+    model            = mujoco.MjModel.from_xml_path(str(_SCENE_XML))
+    data_sim         = mujoco.MjData(model)
+    data_sim_target  = mujoco.MjData(model)   # red — sim policy action
+    data_target      = mujoco.MjData(model)   # green — real policy action
+    data_real        = mujoco.MjData(model)   # blue — real encoder readback
 
     key_id = model.key("sitting").id
-    for d in (data_sim, data_target, data_real):
+    for d in (data_sim, data_sim_target, data_target, data_real):
         mujoco.mj_resetDataKeyframe(model, d, key_id)
         mujoco.mj_forward(model, d)
 
-    foot_ids     = [model.site(f).id for f in ["FL", "FR", "BL", "BR"]]
-    n_substeps   = max(1, round(DT / model.opt.timestep))
+    foot_ids   = [model.site(f).id for f in ["FL", "FR", "BL", "BR"]]
+    n_substeps = max(1, round(DT / model.opt.timestep))
+
+    # Sitting pose from keyframe — this is the absolute zero reference
+    q_sitting        = data_sim.qpos[7:19].copy()
+    body_pos_sitting = data_sim.qpos[0:3].copy()
+    body_quat_sitting= data_sim.qpos[3:7].copy()
 
     # ── Load policy ───────────────────────────────────────────────────────────
     print("Loading policy …")
     from policy import GetupPolicy
     policy = GetupPolicy(str(_GETUP_DIR / "checkpoint" / "latest_getup.pt"))
-
     # Warmup
     policy(build_obs_sim(data_sim, model, np.zeros(12, np.float32), target_height_default))
     print()
 
     # ── Shared state (main thread ↔ viz thread) ───────────────────────────────
-    _lock          = threading.Lock()
-    _state         = {
-        "q_sim":          data_sim.qpos[7:19].copy(),    # sim joint angles
-        "q_target":       np.zeros(N_JOINTS),             # recorded action * scale
-        "q_real":         np.zeros(N_JOINTS),             # recorded encoder pos
+    _lock  = threading.Lock()
+    _state = {
+        "q_sim":          q_sitting.copy(),
+        "body_pos_sim":   body_pos_sitting.copy(),
+        "body_quat_sim":  body_quat_sitting.copy(),
+        "q_sim_target":   q_sitting.copy(),   # sim policy action * scale (red)
+        "q_target":       q_sitting.copy(),   # real policy action * scale (green)
+        "q_real":         q_sitting.copy(),   # real encoder readback (blue)
         "step":           0,
         "total_steps":    T,
         "target_height":  target_height_default,
-        "paused":         False,
+        "paused":         True,   # start paused — user clicks Play to begin
         "reset":          False,
     }
 
@@ -221,8 +229,15 @@ def main():
                 sim_last_action = np.zeros(12, np.float32)
                 step = 0
                 with _lock:
-                    _state["reset"] = False
-                    _state["step"]  = 0
+                    _state["reset"]         = False
+                    _state["step"]          = 0
+                    _state["q_sim"]         = q_sitting.copy()
+                    _state["body_pos_sim"]  = body_pos_sitting.copy()
+                    _state["body_quat_sim"] = body_quat_sitting.copy()
+                    _state["q_sim_target"]  = q_sitting.copy()
+                    _state["q_target"]      = q_sitting.copy()
+                    _state["q_real"]        = q_sitting.copy()
+                    # stay paused — user must explicitly click Play
                 continue
 
             if paused:
@@ -260,10 +275,13 @@ def main():
             q_real   = rec_joint_pos[step]               # what encoders measured
 
             with _lock:
-                _state["q_sim"]    = data_sim.qpos[7:19].copy()
-                _state["q_target"] = q_target.copy()
-                _state["q_real"]   = q_real.copy()
-                _state["step"]     = step + 1
+                _state["q_sim"]         = data_sim.qpos[7:19].copy()
+                _state["body_pos_sim"]  = data_sim.qpos[0:3].copy()
+                _state["body_quat_sim"] = data_sim.qpos[3:7].copy()
+                _state["q_sim_target"]  = (raw_sim * action_scale).copy()
+                _state["q_target"]      = q_target.copy()
+                _state["q_real"]        = q_real.copy()
+                _state["step"]          = step + 1
 
             step += 1
 
@@ -277,10 +295,11 @@ def main():
     # ── Viser ─────────────────────────────────────────────────────────────────
     print("Starting viser …")
     server      = viser.ViserServer(label="Rumi Getup Validation")
-    scene       = ViserMujocoScene.create(server, model)
-    sim_view    = scene.add_robot("sim",    color=(0.75, 0.75, 0.75, 1.00))
-    target_view = scene.add_robot("target", color=(0.20, 0.80, 0.20, 0.80))
-    real_view   = scene.add_robot("real",   color=(0.20, 0.55, 0.90, 0.65))
+    scene            = ViserMujocoScene.create(server, model)
+    sim_view         = scene.add_robot("sim",        color=(0.75, 0.75, 0.75, 1.00))
+    sim_target_view  = scene.add_robot("sim_target", color=(0.90, 0.20, 0.20, 0.80))
+    target_view      = scene.add_robot("real_target",color=(0.20, 0.80, 0.20, 0.80))
+    real_view        = scene.add_robot("real",       color=(0.20, 0.55, 0.90, 0.65))
     scene.create_visualization_gui(
         camera_distance=1.2, camera_azimuth=135.0, camera_elevation=25.0
     )
@@ -297,7 +316,7 @@ def main():
         sl_speed   = server.gui.add_slider(
             "Speed", min=0.1, max=4.0, step=0.1, initial_value=args.speed,
         )
-        btn_pause  = server.gui.add_button("Pause / Resume")
+        btn_pause  = server.gui.add_button("Play / Pause")
         btn_reset  = server.gui.add_button("Reset")
 
     @sl_target.on_update
@@ -314,7 +333,7 @@ def main():
     def _(_):
         with _lock:
             _state["reset"]  = True
-            _state["paused"] = False
+            _state["paused"] = True
 
     # ── Viz loop (main thread) ────────────────────────────────────────────────
     print("Running. Open http://localhost:8080 in a browser. Ctrl+C to stop.\n")
@@ -325,16 +344,21 @@ def main():
             t = time.time()
 
             with _lock:
-                q_sim    = _state["q_sim"].copy()
-                q_target = _state["q_target"].copy()
-                q_real   = _state["q_real"].copy()
-                step     = _state["step"]
-                speed    = sl_speed.value
+                q_sim         = _state["q_sim"].copy()
+                body_pos_sim  = _state["body_pos_sim"].copy()
+                body_quat_sim = _state["body_quat_sim"].copy()
+                q_sim_target  = _state["q_sim_target"].copy()
+                q_target      = _state["q_target"].copy()
+                q_real        = _state["q_real"].copy()
+                step          = _state["step"]
+                speed         = sl_speed.value
 
             args.speed = speed   # feed slider back to replay thread
 
-            # ── Sim (grey) ────────────────────────────────────────────────────
-            data_sim.qpos[7:] = q_sim
+            # ── Sim (grey) — use actual body pos/quat from physics ────────────
+            data_sim.qpos[0:3] = body_pos_sim
+            data_sim.qpos[3:7] = body_quat_sim
+            data_sim.qpos[7:]  = q_sim
             mujoco.mj_kinematics(model, data_sim)
             sim_view.update(data_sim)
 
@@ -342,11 +366,15 @@ def main():
                 [data_sim.site(sid).xpos for sid in foot_ids], axis=0
             )
 
-            # ── Target (green) ────────────────────────────────────────────────
+            # ── Sim target (red) — what sim policy commanded ──────────────────
+            _place_ghost(model, data_sim_target, q_sim_target, sim_foot_centroid, foot_ids)
+            sim_target_view.update(data_sim_target)
+
+            # ── Real target (green) — what real policy commanded ──────────────
             _place_ghost(model, data_target, q_target, sim_foot_centroid, foot_ids)
             target_view.update(data_target)
 
-            # ── Real (blue) ───────────────────────────────────────────────────
+            # ── Real (blue) — encoder readback ────────────────────────────────
             _place_ghost(model, data_real, q_real, sim_foot_centroid, foot_ids)
             real_view.update(data_real)
 
