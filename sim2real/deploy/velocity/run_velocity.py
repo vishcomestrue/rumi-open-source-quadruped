@@ -52,8 +52,8 @@ CONTROL_HZ       = 50
 DT               = 1.0 / CONTROL_HZ
 ACTION_SCALE     = 0.075          # rad — 0.25 * effort_limit(6) / stiffness(20)
 STANDUP_DURATION = 5.0            # seconds to interpolate sit → stand
-STANDUP_HOLD     = 0.5            # seconds to hold at standing before policy
-SIT_HOLD         = 0.5            # seconds to hold at sit pose before interpolation
+STANDUP_HOLD     = 3.0            # seconds to hold at standing before policy
+SIT_HOLD         = 2.0            # seconds to hold at sit pose before interpolation
 DEFAULT_CKPT     = _HERE / "checkpoint" / "latest_velocity.pt"
 
 # Sitting pose in radians (per joint, same JOINT_ORDER).
@@ -68,10 +68,10 @@ SIT_POSE_RAD = np.array([
 # Standing pose in radians — matches env init_state joint_pos.
 # Policy outputs are offsets around this pose.
 STAND_POSE_RAD = np.array([
-     0.0,  -0.0705,  -0.113,   # FL_hip, FL_thigh, FL_calf
-     0.0,   0.0705,   0.113,   # FR_hip, FR_thigh, FR_calf
-     0.0,  -0.0705,  -0.113,   # BL_hip, BL_thigh, BL_calf
-     0.0,   0.0705,   0.113,   # BR_hip, BR_thigh, BR_calf
+     0.0,    -0.125,  -0.166,   # FL_hip, FL_thigh, FL_calf
+     0.0,     0.125,   0.166,   # FR_hip, FR_thigh, FR_calf
+     0.0,    -0.102,  -0.186,   # BL_hip, BL_thigh, BL_calf
+     0.0,     0.102,   0.186,   # BR_hip, BR_thigh, BR_calf
 ], dtype=np.float32)
 
 RADIANS_TO_POS = 4096.0 / (2.0 * np.pi)
