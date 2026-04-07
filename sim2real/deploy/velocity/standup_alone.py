@@ -44,6 +44,13 @@ SIT_POSE_RAD = np.array([
     -0.02, -0.28, -0.66,   # BR_hip, BR_thigh, BR_calf
 ], dtype=np.float32)
 
+STAND_POSE_RAD = np.array([
+     0.0,  -0.125,  -0.166,   # FL_hip, FL_thigh, FL_calf
+     0.0,   0.125,   0.166,   # FR_hip, FR_thigh, FR_calf
+     0.0,  -0.102,  -0.186,   # BL_hip, BL_thigh, BL_calf
+     0.0,   0.102,   0.186,   # BR_hip, BR_thigh, BR_calf
+], dtype=np.float32)
+
 RADIANS_TO_POS = 4096.0 / (2.0 * np.pi)
 
 JOINT_ID_MAP = {
@@ -122,7 +129,7 @@ def main():
     def print_joint_pos(pos_rad: np.ndarray, label: str):
         print(f"\n  [{label}]")
         for i, joint in enumerate(JOINT_ORDER):
-            print(f"    {joint:20s}  {pos_rad[i]:+.4f} rad  (target: {0.0:+.4f})")
+            print(f"    {joint:20s}  {pos_rad[i]:+.4f} rad  (target: {STAND_POSE_RAD[i]:+.4f})")
 
     # ------------------------------------------------------------------
     # 2. Verify readback at sit pose
@@ -154,7 +161,7 @@ def main():
 
     for k in range(standup_steps):
         alpha  = (k + 1) / standup_steps
-        target = SIT_POSE_RAD * (1.0 - alpha)
+        target = SIT_POSE_RAD + (STAND_POSE_RAD - SIT_POSE_RAD) * alpha
         write_joint_positions(target)
         _, accel, _ = imu.read_all()
         t = time.time() - start_time
@@ -166,7 +173,7 @@ def main():
     # ------------------------------------------------------------------
     print(f"\n[HOLD] Standing for {STANDUP_HOLD:.1f} s ...")
     for _ in range(stand_hold_steps):
-        write_joint_positions(np.zeros(12, dtype=np.float32))
+        write_joint_positions(STAND_POSE_RAD)
         _, accel, _ = imu.read_all()
         t = time.time() - start_time
         print(f"{t:8.2f}  {accel[0]:+10.4f}  {accel[1]:+10.4f}  {accel[2]:+10.4f}")
@@ -177,9 +184,9 @@ def main():
     # ------------------------------------------------------------------
     pos = read_joint_pos_rad()
     if pos is not None:
-        print_joint_pos(pos, "Final readback — should be ~0.0 rad")
-        err = np.abs(pos)
-        print(f"\n  Max error vs 0 rad: {err.max():.4f} rad  "
+        print_joint_pos(pos, "Final readback — should be ~STAND_POSE_RAD")
+        err = np.abs(pos - STAND_POSE_RAD)
+        print(f"\n  Max error vs STAND_POSE_RAD: {err.max():.4f} rad  "
               f"({'OK' if err.max() < 0.05 else 'WARNING: did not reach standing'})")
 
     controller.disconnect()
