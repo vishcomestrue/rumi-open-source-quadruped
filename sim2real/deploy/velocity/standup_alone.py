@@ -27,6 +27,7 @@ sys.path.insert(0, str(_HERE.parent))
 
 from mx64_controller import MX64Controller
 from observations import JOINT_ORDER
+from imu import IMU
 
 # ---------------------------------------------------------------------------
 # Constants — must match run_velocity.py exactly
@@ -34,7 +35,7 @@ from observations import JOINT_ORDER
 CONTROL_HZ       = 50
 DT               = 1.0 / CONTROL_HZ
 SIT_HOLD         = 0.5
-STANDUP_HOLD     = 0.5
+STANDUP_HOLD     = 20.0
 
 SIT_POSE_RAD = np.array([
     -0.02,  0.28,  0.66,   # FL_hip, FL_thigh, FL_calf
@@ -92,6 +93,11 @@ def main():
 
     print("[INFO] Tick origin captured.\n")
 
+    imu = IMU()
+    time.sleep(0.5)   # let background thread fill initial values
+    print(f"{'t (s)':>8}  {'ax':>10}  {'ay':>10}  {'az':>10}")
+    print("-" * 46)
+
     # ------------------------------------------------------------------
     # Helpers
     # ------------------------------------------------------------------
@@ -132,30 +138,28 @@ def main():
     # ------------------------------------------------------------------
     # 3. Hold at sitting pose
     # ------------------------------------------------------------------
+    start_time = time.time()
     print(f"[HOLD] Sitting for {SIT_HOLD:.1f} s ...")
     for _ in range(sit_hold_steps):
         write_joint_positions(SIT_POSE_RAD)
+        _, accel, _ = imu.read_all()
+        t = time.time() - start_time
+        print(f"{t:8.2f}  {accel[0]:+10.4f}  {accel[1]:+10.4f}  {accel[2]:+10.4f}")
         time.sleep(DT)
 
     # ------------------------------------------------------------------
     # 4. Interpolate sit → stand
     # ------------------------------------------------------------------
     print(f"[INTERP] Interpolating to standing over {args.standup_duration:.1f} s ...")
-    print_interval = standup_steps // 5   # print ~5 times during interpolation
 
     for k in range(standup_steps):
         alpha  = (k + 1) / standup_steps
         target = SIT_POSE_RAD * (1.0 - alpha)
         write_joint_positions(target)
+        _, accel, _ = imu.read_all()
+        t = time.time() - start_time
+        print(f"{t:8.2f}  {accel[0]:+10.4f}  {accel[1]:+10.4f}  {accel[2]:+10.4f}")
         time.sleep(DT)
-
-        if (k + 1) % print_interval == 0:
-            pos = read_joint_pos_rad()
-            if pos is not None:
-                pct = int(alpha * 100)
-                print(f"  {pct:3d}%  |  joint_pos (FL thigh/calf): "
-                      f"{pos[1]:+.3f} / {pos[2]:+.3f}  "
-                      f"(target: {target[1]:+.3f} / {target[2]:+.3f})")
 
     # ------------------------------------------------------------------
     # 5. Hold at standing
@@ -163,6 +167,9 @@ def main():
     print(f"\n[HOLD] Standing for {STANDUP_HOLD:.1f} s ...")
     for _ in range(stand_hold_steps):
         write_joint_positions(np.zeros(12, dtype=np.float32))
+        _, accel, _ = imu.read_all()
+        t = time.time() - start_time
+        print(f"{t:8.2f}  {accel[0]:+10.4f}  {accel[1]:+10.4f}  {accel[2]:+10.4f}")
         time.sleep(DT)
 
     # ------------------------------------------------------------------
