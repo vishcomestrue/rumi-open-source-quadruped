@@ -35,7 +35,7 @@ from imu import IMU
 CONTROL_HZ       = 50
 DT               = 1.0 / CONTROL_HZ
 SIT_HOLD         = 0.5
-STANDUP_HOLD     = 20.0
+STANDUP_HOLD     = 5.0
 
 SIT_POSE_RAD = np.array([
     -0.02,  0.28,  0.66,   # FL_hip, FL_thigh, FL_calf
@@ -45,11 +45,17 @@ SIT_POSE_RAD = np.array([
 ], dtype=np.float32)
 
 STAND_POSE_RAD = np.array([
-     0.0,  -0.125,  -0.166,   # FL_hip, FL_thigh, FL_calf
-     0.0,   0.125,   0.166,   # FR_hip, FR_thigh, FR_calf
-     0.0,  -0.102,  -0.186,   # BL_hip, BL_thigh, BL_calf
-     0.0,   0.102,   0.186,   # BR_hip, BR_thigh, BR_calf
+     0.0,  -0.0705,  -0.113,   # FL_hip, FL_thigh, FL_calf
+     0.0,   0.0705,   0.113,   # FR_hip, FR_thigh, FR_calf
+     0.0,  -0.0705,  -0.113,   # BL_hip, BL_thigh, BL_calf
+     0.0,   0.0705,   0.113,   # BR_hip, BR_thigh, BR_calf
 ], dtype=np.float32)
+# STAND_POSE_RAD = np.array([
+#      0.0,  -0.125,  -0.166,   # FL_hip, FL_thigh, FL_calf
+#      0.0,   0.125,   0.166,   # FR_hip, FR_thigh, FR_calf
+#      0.0,  -0.102,  -0.186,   # BL_hip, BL_thigh, BL_calf
+#      0.0,   0.102,   0.186,   # BR_hip, BR_thigh, BR_calf
+# ], dtype=np.float32)
 
 RADIANS_TO_POS = 4096.0 / (2.0 * np.pi)
 
@@ -102,8 +108,9 @@ def main():
 
     imu = IMU()
     time.sleep(0.5)   # let background thread fill initial values
-    print(f"{'t (s)':>8}  {'ax':>10}  {'ay':>10}  {'az':>10}")
-    print("-" * 46)
+    print(f"{'t (s)':>8}  {'qw':>9}  {'qx':>9}  {'qy':>9}  {'qz':>9}"
+          f"  {'ax':>9}  {'ay':>9}  {'az':>9}")
+    print("-" * 90)
 
     # ------------------------------------------------------------------
     # Helpers
@@ -149,9 +156,11 @@ def main():
     print(f"[HOLD] Sitting for {SIT_HOLD:.1f} s ...")
     for _ in range(sit_hold_steps):
         write_joint_positions(SIT_POSE_RAD)
-        _, accel, _ = imu.read_all()
+        quat, accel, _ = imu.read_all()
         t = time.time() - start_time
-        print(f"{t:8.2f}  {accel[0]:+10.4f}  {accel[1]:+10.4f}  {accel[2]:+10.4f}")
+        print(f"{t:8.2f}"
+              f"  {quat[0]:+9.4f}  {quat[1]:+9.4f}  {quat[2]:+9.4f}  {quat[3]:+9.4f}"
+              f"  {accel[0]:+9.4f}  {accel[1]:+9.4f}  {accel[2]:+9.4f}")
         time.sleep(DT)
 
     # ------------------------------------------------------------------
@@ -163,21 +172,31 @@ def main():
         alpha  = (k + 1) / standup_steps
         target = SIT_POSE_RAD + (STAND_POSE_RAD - SIT_POSE_RAD) * alpha
         write_joint_positions(target)
-        _, accel, _ = imu.read_all()
+        quat, accel, _ = imu.read_all()
         t = time.time() - start_time
-        print(f"{t:8.2f}  {accel[0]:+10.4f}  {accel[1]:+10.4f}  {accel[2]:+10.4f}")
+        print(f"{t:8.2f}"
+              f"  {quat[0]:+9.4f}  {quat[1]:+9.4f}  {quat[2]:+9.4f}  {quat[3]:+9.4f}"
+              f"  {accel[0]:+9.4f}  {accel[1]:+9.4f}  {accel[2]:+9.4f}")
         time.sleep(DT)
 
     # ------------------------------------------------------------------
     # 5. Hold at standing
     # ------------------------------------------------------------------
+    ax_log, ay_log = [], []
     print(f"\n[HOLD] Standing for {STANDUP_HOLD:.1f} s ...")
     for _ in range(stand_hold_steps):
         write_joint_positions(STAND_POSE_RAD)
-        _, accel, _ = imu.read_all()
+        quat, accel, _ = imu.read_all()
         t = time.time() - start_time
-        print(f"{t:8.2f}  {accel[0]:+10.4f}  {accel[1]:+10.4f}  {accel[2]:+10.4f}")
+        print(f"{t:8.2f}"
+              f"  {quat[0]:+9.4f}  {quat[1]:+9.4f}  {quat[2]:+9.4f}  {quat[3]:+9.4f}"
+              f"  {accel[0]:+9.4f}  {accel[1]:+9.4f}  {accel[2]:+9.4f}")
+        ax_log.append(accel[0]); ay_log.append(accel[1])
         time.sleep(DT)
+
+    ax_arr, ay_arr = np.array(ax_log), np.array(ay_log)
+    print(f"\n  ax — mean: {ax_arr.mean():+.4f}  std: {ax_arr.std():.4f}")
+    print(f"  ay — mean: {ay_arr.mean():+.4f}  std: {ay_arr.std():.4f}")
 
     # ------------------------------------------------------------------
     # 6. Final readback — should be ~0 rad on all joints
