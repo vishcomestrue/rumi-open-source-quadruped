@@ -50,7 +50,9 @@ from observations import build_obs, JOINT_ORDER
 # ---------------------------------------------------------------------------
 CONTROL_HZ       = 50
 DT               = 1.0 / CONTROL_HZ
-ACTION_SCALE     = 0.075          # rad — 0.25 * effort_limit(6) / stiffness(20)
+EFFORT_LIMIT     = 4.0            # Dynamixel MX-64 max torque in Nm
+STIFFNESS        = 20.0           # Nm/rad, for converting policy output to position offsets
+ACTION_SCALE     = 0.25 * EFFORT_LIMIT / STIFFNESS
 STANDUP_DURATION = 5.0            # seconds to interpolate sit → stand
 STANDUP_HOLD     = 3.0            # seconds to hold at standing before policy
 SIT_HOLD         = 2.0            # seconds to hold at sit pose before interpolation
@@ -68,11 +70,17 @@ SIT_POSE_RAD = np.array([
 # Standing pose in radians — matches env init_state joint_pos.
 # Policy outputs are offsets around this pose.
 STAND_POSE_RAD = np.array([
-     0.0,    -0.125,  -0.166,   # FL_hip, FL_thigh, FL_calf
-     0.0,     0.125,   0.166,   # FR_hip, FR_thigh, FR_calf
-     0.0,    -0.102,  -0.186,   # BL_hip, BL_thigh, BL_calf
-     0.0,     0.102,   0.186,   # BR_hip, BR_thigh, BR_calf
+     0.0,  -0.0705,  -0.113,   # FL_hip, FL_thigh, FL_calf
+     0.0,   0.0705,   0.113,   # FR_hip, FR_thigh, FR_calf
+     0.0,  -0.0705,  -0.113,   # BL_hip, BL_thigh, BL_calf
+     0.0,   0.0705,   0.113,   # BR_hip, BR_thigh, BR_calf
 ], dtype=np.float32)
+# STAND_POSE_RAD = np.array([
+#      0.0,    -0.125,  -0.166,   # FL_hip, FL_thigh, FL_calf
+#      0.0,     0.125,   0.166,   # FR_hip, FR_thigh, FR_calf
+#      0.0,    -0.102,  -0.186,   # BL_hip, BL_thigh, BL_calf
+#      0.0,     0.102,   0.186,   # BR_hip, BR_thigh, BR_calf
+# ], dtype=np.float32)
 
 RADIANS_TO_POS = 4096.0 / (2.0 * np.pi)
 
@@ -223,8 +231,19 @@ def main():
             write_joint_positions(STAND_POSE_RAD)
             time.sleep(DT)
 
+        print("[BIAS] Measuring IMU accelerometer bias (1 s) ...")
+        bias_samples = []
+        for _ in range(50):
+            _, accel, _ = imu.read_all()
+            bias_samples.append(accel)
+            time.sleep(DT)
+        accel_bias = np.mean(bias_samples, axis=0).astype(np.float32)
+        accel_bias[2] = 0.0
+        print(f"[BIAS] accel_bias = [{accel_bias[0]:+.4f}, {accel_bias[1]:+.4f}, {accel_bias[2]:+.4f}]\n")
+
         print("[STANDUP] Standing. Starting RL policy.\n")
     else:
+        accel_bias = np.zeros(3, dtype=np.float32)
         print("[DRY RUN] Skipping stand-up sequence.\n")
 
     # ------------------------------------------------------------------
@@ -264,6 +283,7 @@ def main():
                 vel_dict = {j: 0.0 for j in JOINT_ORDER}
 
             quat, accel, gyro = imu.read_all()
+            accel = accel - accel_bias
 
             # --- Build obs ---
             # joint_pos must be relative to default pose (= STAND_POSE_RAD), matching env
