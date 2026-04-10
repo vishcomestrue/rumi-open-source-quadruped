@@ -34,8 +34,8 @@ from imu import IMU
 # ---------------------------------------------------------------------------
 CONTROL_HZ       = 50
 DT               = 1.0 / CONTROL_HZ
-SIT_HOLD         = 0.5
-STANDUP_HOLD     = 5.0
+SIT_HOLD         = 2.0
+STANDUP_HOLD     = 20.0
 
 SIT_POSE_RAD = np.array([
     -0.02,  0.28,  0.66,   # FL_hip, FL_thigh, FL_calf
@@ -71,9 +71,12 @@ def main():
     parser = argparse.ArgumentParser(description="Test sit → stand transition")
     parser.add_argument("--standup-duration", type=float, default=5.0,
                         help="Seconds to interpolate sit → stand (default: 5.0)")
+    parser.add_argument("--sitdown-duration", type=float, default=5.0,
+                        help="Seconds to interpolate stand → sit (default: 5.0)")
     args = parser.parse_args()
 
     standup_steps    = int(args.standup_duration * CONTROL_HZ)
+    sitdown_steps    = int(args.sitdown_duration * CONTROL_HZ)
     sit_hold_steps   = int(SIT_HOLD * CONTROL_HZ)
     stand_hold_steps = int(STANDUP_HOLD * CONTROL_HZ)
 
@@ -81,6 +84,7 @@ def main():
     print("   Rumi Velocity — Stand-up Pipeline Test")
     print("=" * 60)
     print(f"  Standup duration : {args.standup_duration:.1f} s ({standup_steps} steps)")
+    print(f"  Sitdown duration : {args.sitdown_duration:.1f} s ({sitdown_steps} steps)")
     print(f"  Sit hold         : {SIT_HOLD:.1f} s")
     print(f"  Stand hold       : {STANDUP_HOLD:.1f} s")
     print()
@@ -199,14 +203,34 @@ def main():
     print(f"  ay — mean: {ay_arr.mean():+.4f}  std: {ay_arr.std():.4f}")
 
     # ------------------------------------------------------------------
-    # 6. Final readback — should be ~0 rad on all joints
+    # 6. Interpolate stand → sit
+    # ------------------------------------------------------------------
+    sitdown_start = read_joint_pos_rad()
+    if sitdown_start is None:
+        sitdown_start = STAND_POSE_RAD.copy()
+        print("[WARN] Could not read current positions; using STAND_POSE_RAD as sit-down start.")
+
+    print(f"\n[INTERP] Interpolating back to sitting over {args.sitdown_duration:.1f} s ...")
+    for k in range(sitdown_steps):
+        alpha  = (k + 1) / sitdown_steps
+        target = sitdown_start + (SIT_POSE_RAD - sitdown_start) * alpha
+        write_joint_positions(target)
+        quat, accel, _ = imu.read_all()
+        t = time.time() - start_time
+        print(f"{t:8.2f}"
+              f"  {quat[0]:+9.4f}  {quat[1]:+9.4f}  {quat[2]:+9.4f}  {quat[3]:+9.4f}"
+              f"  {accel[0]:+9.4f}  {accel[1]:+9.4f}  {accel[2]:+9.4f}")
+        time.sleep(DT)
+
+    # ------------------------------------------------------------------
+    # 7. Final readback — should be ~SIT_POSE_RAD
     # ------------------------------------------------------------------
     pos = read_joint_pos_rad()
     if pos is not None:
-        print_joint_pos(pos, "Final readback — should be ~STAND_POSE_RAD")
-        err = np.abs(pos - STAND_POSE_RAD)
-        print(f"\n  Max error vs STAND_POSE_RAD: {err.max():.4f} rad  "
-              f"({'OK' if err.max() < 0.05 else 'WARNING: did not reach standing'})")
+        print_joint_pos(pos, "Final readback — should be ~SIT_POSE_RAD")
+        err = np.abs(pos - SIT_POSE_RAD)
+        print(f"\n  Max error vs SIT_POSE_RAD: {err.max():.4f} rad  "
+              f"({'OK' if err.max() < 0.05 else 'WARNING: did not reach sitting'})")
 
     controller.disconnect()
     print("\n[DONE] Motors disconnected.")
