@@ -48,15 +48,17 @@ from observations import build_obs, JOINT_ORDER
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
-CONTROL_HZ       = 50
-DT               = 1.0 / CONTROL_HZ
-EFFORT_LIMIT     = 4.0            # Dynamixel MX-64 max torque in Nm
-STIFFNESS        = 20.0           # Nm/rad, for converting policy output to position offsets
-ACTION_SCALE     = 0.25 * EFFORT_LIMIT / STIFFNESS
-STANDUP_DURATION = 5.0            # seconds to interpolate sit → stand
-STANDUP_HOLD     = 3.0            # seconds to hold at standing before policy
-SIT_HOLD         = 2.0            # seconds to hold at sit pose before interpolation
-DEFAULT_CKPT     = _HERE / "checkpoint" / "latest_velocity.pt"
+CONTROL_HZ            = 50
+DT                    = 1.0 / CONTROL_HZ
+EFFORT_LIMIT          = 4.0                  # Dynamixel MX-64 max torque in Nm
+STIFFNESS             = 20.0                 # Nm/rad, for converting policy output to position offsets
+ACTION_SCALE          = 0.25 * EFFORT_LIMIT / STIFFNESS
+STANDUP_DURATION      = 5.0                  # seconds to interpolate sit → stand
+STANDUP_HOLD          = 3.0                  # seconds to hold at standing before policy
+BIAS_COLLECT_DURATION = STANDUP_HOLD - 1.0   # seconds to collect IMU bias (after 1 s settle)
+SIT_HOLD              = 2.0                  # seconds to hold at sit pose before interpolation
+SITDOWN_DURATION      = 5.0                  # seconds to interpolate stand → sit after policy ends
+DEFAULT_CKPT          = _HERE / "checkpoint" / "latest_velocity.pt"
 
 # Sitting pose in radians (per joint, same JOINT_ORDER).
 # The captured tick origin is treated as this configuration.
@@ -124,6 +126,7 @@ def main():
     print(f"  Checkpoint : {Path(args.checkpoint).name}")
     print(f"  Duration   : {args.duration:.1f} s  ({max_steps} steps @ {CONTROL_HZ} Hz)")
     print(f"  Command    : vx={command[0]:.2f}  vy={command[1]:.2f}  wz={command[2]:.2f}")
+    print(f"  Action scale : {ACTION_SCALE:.4f} rad/unit")
     print(f"  Dry run    : {args.dry_run}")
     print(f"  Record     : {args.record}")
     print()
@@ -226,16 +229,15 @@ def main():
             write_joint_positions(target)
             time.sleep(DT)
 
-        print(f"[STANDUP] Holding standing pose for {STANDUP_HOLD:.1f} s ...")
-        for _ in range(stand_hold_steps):
+        settle_steps      = stand_hold_steps - int(BIAS_COLLECT_DURATION * CONTROL_HZ)
+        bias_samples      = []
+        print(f"[STANDUP] Holding standing pose for {STANDUP_HOLD:.1f} s "
+              f"(bias collection starts after 1 s settle) ...")
+        for i in range(stand_hold_steps):
             write_joint_positions(STAND_POSE_RAD)
-            time.sleep(DT)
-
-        print("[BIAS] Measuring IMU accelerometer bias (1 s) ...")
-        bias_samples = []
-        for _ in range(50):
-            _, accel, _ = imu.read_all()
-            bias_samples.append(accel)
+            if i >= settle_steps:
+                _, accel, _ = imu.read_all()
+                bias_samples.append(accel)
             time.sleep(DT)
         accel_bias = np.mean(bias_samples, axis=0).astype(np.float32)
         accel_bias[2] = 0.0
@@ -335,6 +337,22 @@ def main():
         steps_done = min(step + 1, max_steps)
         print(f"\n[DONE] {steps_done} steps in {total:.2f} s "
               f"(avg {steps_done/total:.1f} Hz, {late_count} late steps)")
+
+        if not args.dry_run and controller is not None:
+            sitdown_steps = int(SITDOWN_DURATION * CONTROL_HZ)
+            pos_dict, _ = read_joint_states()
+            if pos_dict is not None:
+                sitdown_start = np.array([pos_dict[j] for j in JOINT_ORDER], dtype=np.float32)
+            else:
+                sitdown_start = STAND_POSE_RAD.copy()
+                print("[WARN] Could not read current positions; using STAND_POSE_RAD as sit-down start.")
+            print(f"[SITDOWN] Interpolating stand → sit over {SITDOWN_DURATION:.1f} s ...")
+            for k in range(sitdown_steps):
+                alpha  = (k + 1) / sitdown_steps
+                target = sitdown_start + (SIT_POSE_RAD - sitdown_start) * alpha
+                write_joint_positions(target)
+                time.sleep(DT)
+
         if controller is not None:
             controller.disconnect()
             print("[INFO] Motors disconnected.")
