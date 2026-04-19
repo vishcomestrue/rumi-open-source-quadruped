@@ -38,9 +38,15 @@ _H_MAX = 0.25
 # ---------------------------------------------------------------------------
 import sys as _sys
 from pathlib import Path as _Path
-_RUMI_MJLAB = _Path(__file__).resolve().parent.parent.parent / "rumi-mjlab" / "src"
-if str(_RUMI_MJLAB) not in _sys.path:
-    _sys.path.insert(0, str(_RUMI_MJLAB))
+
+_RUMI_MJLAB_CANDIDATES = [
+    _Path(__file__).resolve().parent.parent.parent / "rumi-mjlab" / "src",  # dev: sim2real/rumi-mjlab/src
+    _Path("/home/robot/rumi-mjlab/src"),                                     # Raspberry Pi
+]
+for _candidate in _RUMI_MJLAB_CANDIDATES:
+    if _candidate.exists() and str(_candidate) not in _sys.path:
+        _sys.path.insert(0, str(_candidate))
+        break
 from rumi_getup.rumi.kinematics import estimate_body_height as _estimate_body_height_fk
 
 

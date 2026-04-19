@@ -37,7 +37,7 @@ sys.path.insert(0, str(_HERE.parent.parent))        # sim2real/ (DynamixelSDK pa
 from mx64_controller import MX64Controller
 from imu import IMU
 from policy import GetupPolicy
-from observations import build_obs, JOINT_ORDER
+from observations import build_obs, JOINT_ORDER, _estimate_body_height
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -180,6 +180,7 @@ def main():
         rec_joint_pos  = np.zeros((max_steps, 12), dtype=np.float32)
         rec_joint_vel  = np.zeros((max_steps, 12), dtype=np.float32)
         rec_raw_action = np.zeros((max_steps, 12), dtype=np.float32)
+        rec_fk_height  = np.zeros((max_steps,),    dtype=np.float32)
 
     print("\n" + "=" * 60)
     print("   Starting control loop — Ctrl+C to stop")
@@ -217,10 +218,12 @@ def main():
 
             # --- Record ---
             if args.record:
+                _jp = np.array([pos_dict[j] for j in JOINT_ORDER], dtype=np.float32)
                 rec_quat[step]       = quat
-                rec_joint_pos[step]  = np.array([pos_dict[j] for j in JOINT_ORDER], dtype=np.float32)
+                rec_joint_pos[step]  = _jp
                 rec_joint_vel[step]  = np.array([vel_dict[j] for j in JOINT_ORDER], dtype=np.float32)
                 rec_raw_action[step] = raw_action
+                rec_fk_height[step]  = _estimate_body_height(_jp, quat)
 
             # --- Send to motors ---
             processed = raw_action * ACTION_SCALE   # [12], rad offsets from sit pose
@@ -253,6 +256,9 @@ def main():
         steps_done = min(step + 1, max_steps)
         print(f"\n[DONE] {steps_done} steps in {total:.2f} s "
               f"(avg {steps_done/total:.1f} Hz, {late_count} late steps)")
+        if late_count > steps_done * 0.05:
+            print(f"[WARN] {late_count}/{steps_done} steps were late "
+                  f"({100*late_count/steps_done:.1f}%) — loop may be overloaded.")
         if not args.dry_run and controller is not None:
             sitdown_steps = int(SITDOWN_DURATION * CONTROL_HZ)
             pos_dict, _ = read_joint_states()
@@ -275,21 +281,29 @@ def main():
             print("[INFO] Motors disconnected.")
 
         if args.record:
-            _REC_DIR.mkdir(parents=True, exist_ok=True)
-            rec_path = _REC_DIR / f"getup_{int(time.time())}.npz"
-            np.savez(
-                rec_path,
-                # Only save the steps that actually ran
-                quat       = rec_quat[:steps_done],
-                joint_pos  = rec_joint_pos[:steps_done],
-                joint_vel  = rec_joint_vel[:steps_done],
-                raw_action = rec_raw_action[:steps_done],
-                # Metadata
-                target_height = np.float32(args.target),
-                control_hz    = np.float32(CONTROL_HZ),
-                action_scale  = np.float32(ACTION_SCALE),
-            )
-            print(f"[REC] Saved {steps_done} steps → {rec_path}")
+            ans = input("\nSave recording? [y/n]: ").strip().lower()
+            if ans == "y":
+                _REC_DIR.mkdir(parents=True, exist_ok=True)
+                ts = int(time.time())
+                h_tag = f"h{str(args.target).replace('.', '')}"
+                rec_path = _REC_DIR / f"getup_{ts}_{h_tag}.npz"
+                np.savez(
+                    rec_path,
+                    # Only save the steps that actually ran
+                    quat       = rec_quat[:steps_done],
+                    joint_pos  = rec_joint_pos[:steps_done],
+                    joint_vel  = rec_joint_vel[:steps_done],
+                    raw_action = rec_raw_action[:steps_done],
+                    fk_height  = rec_fk_height[:steps_done],
+                    # Metadata
+                    target_height = np.float32(args.target),
+                    control_hz    = np.float32(CONTROL_HZ),
+                    action_scale  = np.float32(ACTION_SCALE),
+                    timestamp     = np.int64(ts),
+                )
+                print(f"[REC] Saved {steps_done} steps → {rec_path}")
+            else:
+                print("[REC] Recording discarded.")
 
 
 if __name__ == "__main__":
