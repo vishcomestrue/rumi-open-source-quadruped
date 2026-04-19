@@ -42,10 +42,11 @@ from observations import build_obs, JOINT_ORDER
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
-CONTROL_HZ   = 50
-DT           = 1.0 / CONTROL_HZ
-ACTION_SCALE = 0.075          # rad per unit — 0.25 * effort_limit(6) / stiffness(20)
-DEFAULT_CKPT = _HERE / "checkpoint" / "latest_getup.pt"
+CONTROL_HZ       = 50
+DT               = 1.0 / CONTROL_HZ
+ACTION_SCALE     = 0.075          # rad per unit — 0.25 * effort_limit(6) / stiffness(20)
+SITDOWN_DURATION = 5.0            # seconds to interpolate → sit after policy ends
+DEFAULT_CKPT     = _HERE / "checkpoint" / "latest_getup.pt"
 
 
 # ---------------------------------------------------------------------------
@@ -55,7 +56,7 @@ def main():
     parser = argparse.ArgumentParser(description="Rumi getup direct sim2real")
     parser.add_argument("--checkpoint", default=str(DEFAULT_CKPT),
                         help="Path to .pt checkpoint (default: checkpoint/latest_getup.pt)")
-    parser.add_argument("--duration",   type=float, default=5.0,
+    parser.add_argument("--duration",   type=float, default=15.0,
                         help="Run duration in seconds (default: 5.0)")
     parser.add_argument("--dry-run",    action="store_true",
                         help="Do not send commands to motors (print actions only)")
@@ -252,6 +253,23 @@ def main():
         steps_done = min(step + 1, max_steps)
         print(f"\n[DONE] {steps_done} steps in {total:.2f} s "
               f"(avg {steps_done/total:.1f} Hz, {late_count} late steps)")
+        if not args.dry_run and controller is not None:
+            sitdown_steps = int(SITDOWN_DURATION * CONTROL_HZ)
+            pos_dict, _ = read_joint_states()
+            if pos_dict is not None:
+                sitdown_start = np.array([pos_dict[j] for j in JOINT_ORDER], dtype=np.float32)
+            else:
+                sitdown_start = np.zeros(12, dtype=np.float32)
+                print("[WARN] Could not read current positions; using sit-pose as sitdown start.")
+            print(f"[SITDOWN] Interpolating → sit over {SITDOWN_DURATION:.1f} s ...")
+            sit_target = np.zeros(12, dtype=np.float32)
+            for k in range(sitdown_steps):
+                alpha = (k + 1) / sitdown_steps
+                target_arr = sitdown_start + (sit_target - sitdown_start) * alpha
+                target_dict = {j: float(target_arr[i]) for i, j in enumerate(JOINT_ORDER)}
+                write_joint_positions(target_dict)
+                time.sleep(DT)
+
         if controller is not None:
             controller.disconnect()
             print("[INFO] Motors disconnected.")
