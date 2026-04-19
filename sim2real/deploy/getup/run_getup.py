@@ -181,6 +181,7 @@ def main():
         rec_joint_vel  = np.zeros((max_steps, 12), dtype=np.float32)
         rec_raw_action = np.zeros((max_steps, 12), dtype=np.float32)
         rec_fk_height  = np.zeros((max_steps,),    dtype=np.float32)
+        rec_timestamp  = np.zeros((max_steps,),    dtype=np.float32)
 
     print("\n" + "=" * 60)
     print("   Starting control loop — Ctrl+C to stop")
@@ -223,6 +224,7 @@ def main():
                 rec_joint_vel[step]  = np.array([vel_dict[j] for j in JOINT_ORDER], dtype=np.float32)
                 rec_raw_action[step] = raw_action
                 rec_fk_height[step]  = fk_height
+                rec_timestamp[step]  = loop_start - start_time
 
             # --- Send to motors ---
             processed = raw_action * ACTION_SCALE   # [12], rad offsets from sit pose
@@ -294,6 +296,7 @@ def main():
                     joint_vel  = rec_joint_vel[:steps_done],
                     raw_action = rec_raw_action[:steps_done],
                     fk_height  = rec_fk_height[:steps_done],
+                    timestamp_rel = rec_timestamp[:steps_done],
                     # Metadata
                     target_height = np.float32(args.target),
                     control_hz    = np.float32(CONTROL_HZ),
