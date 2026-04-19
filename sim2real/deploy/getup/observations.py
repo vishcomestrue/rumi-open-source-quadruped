@@ -109,7 +109,7 @@ def build_obs(
     joint_vel = np.array([joint_vel_dict[j] for j in JOINT_ORDER], dtype=np.float32)
 
     # body_height
-    raw_h = _estimate_body_height(joint_pos, quat_wxyz)
+    raw_h = float(_estimate_body_height(joint_pos, quat_wxyz))
     body_height_obs = float(np.clip((raw_h - _H_MIN) / (_H_MAX - _H_MIN), -0.5, 1.5))
 
     # target height
@@ -127,4 +127,4 @@ def build_obs(
         last_action.astype(np.float32),  # [12]
     ])
     assert obs.shape == (41,), f"Expected (41,), got {obs.shape}"
-    return obs.astype(np.float32)
+    return obs.astype(np.float32), raw_h

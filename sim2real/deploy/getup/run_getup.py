@@ -37,7 +37,7 @@ sys.path.insert(0, str(_HERE.parent.parent))        # sim2real/ (DynamixelSDK pa
 from mx64_controller import MX64Controller
 from imu import IMU
 from policy import GetupPolicy
-from observations import build_obs, JOINT_ORDER, _estimate_body_height
+from observations import build_obs, JOINT_ORDER
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -165,7 +165,7 @@ def main():
     _dummy_pos = {j: 0.0 for j in JOINT_ORDER}
     _dummy_vel = {j: 0.0 for j in JOINT_ORDER}
     _dummy_q   = np.array([1.0, 0.0, 0.0, 0.0], dtype=np.float32)
-    _dummy_obs = build_obs(_dummy_pos, _dummy_vel, _dummy_q, np.zeros(12, dtype=np.float32), args.target)
+    _dummy_obs, _ = build_obs(_dummy_pos, _dummy_vel, _dummy_q, np.zeros(12, dtype=np.float32), args.target)
     policy(_dummy_obs)
     print("[WARMUP] Done.\n")
 
@@ -211,19 +211,18 @@ def main():
                 quat = np.array([1.0, 0.0, 0.0, 0.0], dtype=np.float32)
 
             # --- Build obs ---
-            obs = build_obs(pos_dict, vel_dict, quat, last_action, args.target)
+            obs, fk_height = build_obs(pos_dict, vel_dict, quat, last_action, args.target)
 
             # --- Policy inference ---
             raw_action = policy(obs)   # [12], unscaled
 
             # --- Record ---
             if args.record:
-                _jp = np.array([pos_dict[j] for j in JOINT_ORDER], dtype=np.float32)
                 rec_quat[step]       = quat
-                rec_joint_pos[step]  = _jp
+                rec_joint_pos[step]  = np.array([pos_dict[j] for j in JOINT_ORDER], dtype=np.float32)
                 rec_joint_vel[step]  = np.array([vel_dict[j] for j in JOINT_ORDER], dtype=np.float32)
                 rec_raw_action[step] = raw_action
-                rec_fk_height[step]  = _estimate_body_height(_jp, quat)
+                rec_fk_height[step]  = fk_height
 
             # --- Send to motors ---
             processed = raw_action * ACTION_SCALE   # [12], rad offsets from sit pose
