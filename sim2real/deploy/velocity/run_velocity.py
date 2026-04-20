@@ -260,6 +260,7 @@ def main():
         rec_joint_pos  = np.zeros((max_steps, 12), dtype=np.float32)
         rec_joint_vel  = np.zeros((max_steps, 12), dtype=np.float32)
         rec_raw_action = np.zeros((max_steps, 12), dtype=np.float32)
+        rec_timestamp  = np.zeros((max_steps,),    dtype=np.float32)
 
     print("=" * 60)
     print("   Starting RL control loop — Ctrl+C to stop")
@@ -306,6 +307,7 @@ def main():
                 rec_joint_pos[step]  = np.array([joint_pos_rel[j] for j in JOINT_ORDER], dtype=np.float32)
                 rec_joint_vel[step]  = np.array([vel_dict[j] for j in JOINT_ORDER], dtype=np.float32)
                 rec_raw_action[step] = raw_action
+                rec_timestamp[step]  = loop_start - start_time
 
             # --- Send to motors ---
             processed = raw_action * ACTION_SCALE   # rad offsets around standing pose
@@ -337,6 +339,9 @@ def main():
         steps_done = min(step + 1, max_steps)
         print(f"\n[DONE] {steps_done} steps in {total:.2f} s "
               f"(avg {steps_done/total:.1f} Hz, {late_count} late steps)")
+        if late_count > steps_done * 0.10:
+            print(f"[WARN] {late_count}/{steps_done} steps were late "
+                  f"({100*late_count/steps_done:.1f}%) — loop may be overloaded.")
 
         if not args.dry_run and controller is not None:
             sitdown_steps = int(SITDOWN_DURATION * CONTROL_HZ)
@@ -358,21 +363,28 @@ def main():
             print("[INFO] Motors disconnected.")
 
         if args.record:
-            _REC_DIR.mkdir(parents=True, exist_ok=True)
-            rec_path = _REC_DIR / f"velocity_{int(time.time())}.npz"
-            np.savez(
-                rec_path,
-                accel      = rec_accel[:steps_done],
-                gyro       = rec_gyro[:steps_done],
-                quat       = rec_quat[:steps_done],
-                joint_pos  = rec_joint_pos[:steps_done],
-                joint_vel  = rec_joint_vel[:steps_done],
-                raw_action = rec_raw_action[:steps_done],
-                command    = command,
-                control_hz = np.float32(CONTROL_HZ),
-                action_scale = np.float32(ACTION_SCALE),
-            )
-            print(f"[REC] Saved {steps_done} steps → {rec_path}")
+            ans = input("\nSave recording? [y/n]: ").strip().lower()
+            if ans == "y":
+                _REC_DIR.mkdir(parents=True, exist_ok=True)
+                ts = int(time.time())
+                rec_path = _REC_DIR / f"velocity_{ts}.npz"
+                np.savez(
+                    rec_path,
+                    accel         = rec_accel[:steps_done],
+                    gyro          = rec_gyro[:steps_done],
+                    quat          = rec_quat[:steps_done],
+                    joint_pos     = rec_joint_pos[:steps_done],
+                    joint_vel     = rec_joint_vel[:steps_done],
+                    raw_action    = rec_raw_action[:steps_done],
+                    timestamp_rel = rec_timestamp[:steps_done],
+                    command       = command,
+                    control_hz    = np.float32(CONTROL_HZ),
+                    action_scale  = np.float32(ACTION_SCALE),
+                    timestamp     = np.int64(ts),
+                )
+                print(f"[REC] Saved {steps_done} steps → {rec_path}")
+            else:
+                print("[REC] Recording discarded.")
 
 
 if __name__ == "__main__":
