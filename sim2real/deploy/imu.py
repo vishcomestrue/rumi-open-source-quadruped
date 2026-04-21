@@ -20,15 +20,18 @@ class IMU:
         self._quat  = np.array([1.0, 0.0, 0.0, 0.0], dtype=np.float32)
         self._accel = np.zeros(3, dtype=np.float32)
         self._gyro  = np.zeros(3, dtype=np.float32)
+        self._seq   = 0        # incremented every time fresh sensor data arrives
         self._lock = threading.Lock()
         self._thread = threading.Thread(target=self._run, daemon=True)
         self._thread.start()
         print("[IMU] Ready.")
 
     def _run(self):
+        consec_none = 0
         while True:
             data = self._reader.read()
             if data is not None:
+                consec_none = 0
                 qx, qy, qz, qw = data['quaternion']   # bno080.py returns (x, y, z, w)
                 ax, ay, az = data['accel']
                 gx, gy, gz = data['gyro']
@@ -36,8 +39,18 @@ class IMU:
                     self._quat  = np.array([qw, qx, qy, qz], dtype=np.float32)
                     self._accel = np.array([ax, ay, az],      dtype=np.float32)
                     self._gyro  = np.array([gx, gy, gz],      dtype=np.float32)
+                    self._seq  += 1
             else:
-                time.sleep(0.005)   # brief pause during errors / reconnects
+                consec_none += 1
+                # After 500 ms of silence, the BNO080 has likely auto-reset.
+                # Force a reconnect so the freeze doesn't last 2+ seconds.
+                if consec_none >= 100:   # 100 × 5 ms = 500 ms
+                    consec_none = 0
+                    try:
+                        self._reader._connect()
+                    except Exception:
+                        pass
+                time.sleep(0.005)
 
     def read_quaternion(self) -> np.ndarray:
         """Return latest (w, x, y, z) quaternion — non-blocking."""
@@ -58,3 +71,12 @@ class IMU:
         """Return (quat_wxyz, accel_xyz, gyro_xyz) atomically — non-blocking."""
         with self._lock:
             return self._quat.copy(), self._accel.copy(), self._gyro.copy()
+
+    def read_all_with_seq(self) -> tuple:
+        """Return (quat_wxyz, accel_xyz, gyro_xyz, seq) atomically.
+
+        seq increments each time fresh data arrives from the sensor.
+        If seq is unchanged since your last call, the data is stale (repeated frame).
+        """
+        with self._lock:
+            return self._quat.copy(), self._accel.copy(), self._gyro.copy(), self._seq
