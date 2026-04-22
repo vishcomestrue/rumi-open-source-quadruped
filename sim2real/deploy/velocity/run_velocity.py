@@ -22,6 +22,7 @@ Usage:
 """
 
 import argparse
+import json
 import sys
 import time
 from pathlib import Path
@@ -31,7 +32,7 @@ import numpy as np
 # ---------------------------------------------------------------------------
 # Recording
 # ---------------------------------------------------------------------------
-_REC_DIR = Path(__file__).resolve().parent / "recordings"
+_REC_DIR = Path(__file__).resolve().parent / "run_smps"
 
 # ---------------------------------------------------------------------------
 # Paths
@@ -102,7 +103,7 @@ def main():
     parser = argparse.ArgumentParser(description="Rumi velocity direct sim2real")
     parser.add_argument("--checkpoint", default=str(DEFAULT_CKPT),
                         help="Path to .pt checkpoint (default: checkpoint/latest_velocity.pt)")
-    parser.add_argument("--duration",   type=float, default=20.0,
+    parser.add_argument("--duration",   type=float, default=15.0,
                         help="RL policy run duration in seconds (default: 20.0)")
     parser.add_argument("--target",     type=float, nargs=3,
                         default=[0.0, 0.0, 0.0],
@@ -113,6 +114,11 @@ def main():
     parser.add_argument("--record",     action="store_true",
                         help="Save a .npz recording to velocity/recordings/ after the run")
     args = parser.parse_args()
+
+    with open(_HERE.parent / "motor_config.json") as _f:
+        _mc = json.load(_f)
+    _kp = _mc.get("motors", {}).get("1", {}).get("kp", 20.0)
+    _kd = _mc.get("motors", {}).get("1", {}).get("kd", 0.0)
 
     command = np.array(args.target, dtype=np.float32)
     max_steps = int(args.duration * CONTROL_HZ)
@@ -299,16 +305,6 @@ def main():
             # --- Policy inference ---
             raw_action = policy(obs)   # [12], unscaled
 
-            # --- Record ---
-            if args.record:
-                rec_accel[step]      = accel
-                rec_gyro[step]       = gyro
-                rec_quat[step]       = quat
-                rec_joint_pos[step]  = np.array([joint_pos_rel[j] for j in JOINT_ORDER], dtype=np.float32)
-                rec_joint_vel[step]  = np.array([vel_dict[j] for j in JOINT_ORDER], dtype=np.float32)
-                rec_raw_action[step] = raw_action
-                rec_timestamp[step]  = loop_start - start_time
-
             # --- Send to motors ---
             processed = raw_action * ACTION_SCALE   # rad offsets around standing pose
             if not args.dry_run:
@@ -330,6 +326,16 @@ def main():
                 time.sleep(sleep_time)
             elif sleep_time < -0.002:
                 late_count += 1
+
+            # --- Record (after motor write + sleep, uses idle time) ---
+            if args.record:
+                rec_accel[step]      = accel
+                rec_gyro[step]       = gyro
+                rec_quat[step]       = quat
+                rec_joint_pos[step]  = np.array([joint_pos_rel[j] for j in JOINT_ORDER], dtype=np.float32)
+                rec_joint_vel[step]  = np.array([vel_dict[j] for j in JOINT_ORDER], dtype=np.float32)
+                rec_raw_action[step] = raw_action
+                rec_timestamp[step]  = loop_start - start_time
 
     except KeyboardInterrupt:
         print("\n[STOP] Ctrl+C received.")
@@ -363,28 +369,27 @@ def main():
             print("[INFO] Motors disconnected.")
 
         if args.record:
-            ans = input("\nSave recording? [y/n]: ").strip().lower()
-            if ans == "y":
-                _REC_DIR.mkdir(parents=True, exist_ok=True)
-                ts = int(time.time())
-                rec_path = _REC_DIR / f"velocity_{ts}.npz"
-                np.savez(
-                    rec_path,
-                    accel         = rec_accel[:steps_done],
-                    gyro          = rec_gyro[:steps_done],
-                    quat          = rec_quat[:steps_done],
-                    joint_pos     = rec_joint_pos[:steps_done],
-                    joint_vel     = rec_joint_vel[:steps_done],
-                    raw_action    = rec_raw_action[:steps_done],
-                    timestamp_rel = rec_timestamp[:steps_done],
-                    command       = command,
-                    control_hz    = np.float32(CONTROL_HZ),
-                    action_scale  = np.float32(ACTION_SCALE),
-                    timestamp     = np.int64(ts),
-                )
-                print(f"[REC] Saved {steps_done} steps → {rec_path}")
-            else:
-                print("[REC] Recording discarded.")
+            _REC_DIR.mkdir(parents=True, exist_ok=True)
+            ts = int(time.time())
+            vx_str  = f"{command[0]:.2f}".replace(".", "p")
+            kp_str  = f"{_kp:.0f}"
+            kd_str  = f"{_kd:.1f}".replace(".", "p")
+            rec_path = _REC_DIR / f"data_{ts}_{vx_str}_{kp_str}_{kd_str}.npz"
+            np.savez(
+                rec_path,
+                accel         = rec_accel[:steps_done],
+                gyro          = rec_gyro[:steps_done],
+                quat          = rec_quat[:steps_done],
+                joint_pos     = rec_joint_pos[:steps_done],
+                joint_vel     = rec_joint_vel[:steps_done],
+                raw_action    = rec_raw_action[:steps_done],
+                timestamp_rel = rec_timestamp[:steps_done],
+                command       = command,
+                control_hz    = np.float32(CONTROL_HZ),
+                action_scale  = np.float32(ACTION_SCALE),
+                timestamp     = np.int64(ts),
+            )
+            print(f"[REC] Saved {steps_done} steps → {rec_path}")
 
 
 if __name__ == "__main__":
