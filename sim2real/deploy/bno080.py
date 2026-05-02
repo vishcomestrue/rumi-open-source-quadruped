@@ -39,7 +39,7 @@ class IMUReader:
                 # Silence the unconditional print(packet) for unknown/unsupported reports
                 self._bno._handle_packet = types.MethodType(_quiet_handle_packet, self._bno)
                 for f in _FEATURES:
-                    self._bno.enable_feature(f, report_interval=20000)  # 20ms = 50Hz
+                    self._bno.enable_feature(f, report_interval=20000)   # 5ms = 200Hz
                     time.sleep(0.05)
                 return
             except Exception:
@@ -65,14 +65,16 @@ class IMUReader:
         except Exception:
             return None
 
-        # Drop frames with I2C bit errors:
+        # Drop frames where sensor hasn't produced data yet or I2C bit errors:
         #   - quaternion components must be in [-1, 1] (unit quaternion)
         #   - gyro must be within BNO080 hardware range (±2000 dps = ±34.9 rad/s)
+        if quat is None or accel is None or gyro is None:
+            return None
         if any(abs(v) > 1.0 for v in quat):
             return None
         if any(abs(v) > 35.0 for v in gyro):
             return None
-        if any(abs(v) > 39.5 for v in accel):   # BNO080 default accel range ±4g = ±39.2 m/s²
+        if any(abs(v) > 78.5 for v in accel):   # BNO080 SH-2 configures accel for ±8g = ±78.5 m/s²
             return None
 
         return {'timestamp': time.time(), 'quaternion': quat, 'accel': accel, 'gyro': gyro}
