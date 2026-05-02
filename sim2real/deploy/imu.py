@@ -29,7 +29,10 @@ class IMU:
     def _run(self):
         consec_none = 0
         while True:
-            data = self._reader.read()
+            try:
+                data = self._reader.read()
+            except Exception:
+                data = None
             if data is not None:
                 consec_none = 0
                 qx, qy, qz, qw = data['quaternion']   # bno080.py returns (x, y, z, w)
