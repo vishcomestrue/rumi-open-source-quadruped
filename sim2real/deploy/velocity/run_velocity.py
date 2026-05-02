@@ -267,13 +267,18 @@ def main():
         rec_joint_vel  = np.zeros((max_steps, 12), dtype=np.float32)
         rec_raw_action = np.zeros((max_steps, 12), dtype=np.float32)
         rec_timestamp  = np.zeros((max_steps,),    dtype=np.float32)
+        rec_imu_seq    = np.zeros((max_steps,),    dtype=np.int64)
 
     print("=" * 60)
     print("   Starting RL control loop — Ctrl+C to stop")
     print("=" * 60 + "\n")
 
-    start_time = time.time()
-    late_count = 0
+    start_time       = time.time()
+    late_count       = 0
+    chip_rst_count   = 0   # BNO returned None  → chip reset / I2C error
+    ahrs_stall_count = 0   # BNO returned stale data → AHRS internal stall
+    prev_imu_seq     = -1
+    prev_quat        = np.zeros(4, dtype=np.float32)
     step = 0
 
     try:
@@ -291,8 +296,18 @@ def main():
                 pos_dict = {j: 0.0 for j in JOINT_ORDER}
                 vel_dict = {j: 0.0 for j in JOINT_ORDER}
 
-            quat, accel, gyro = imu.read_all()
+            quat, accel, gyro, imu_seq = imu.read_all_with_seq()
             accel = accel - accel_bias
+
+            # --- Classify IMU frame ---
+            quat_same = np.array_equal(quat, prev_quat)
+            if quat_same:
+                if imu_seq == prev_imu_seq:
+                    chip_rst_count += 1    # bno080 returned None — chip reset or I2C error
+                else:
+                    ahrs_stall_count += 1  # bno080 returned identical data — AHRS stall
+            prev_imu_seq = imu_seq
+            prev_quat    = quat
 
             # --- Build obs ---
             # joint_pos must be relative to default pose (= STAND_POSE_RAD), matching env
@@ -317,7 +332,8 @@ def main():
             if step % 50 == 0:
                 elapsed = time.time() - start_time
                 print(f"  step {step:4d}/{max_steps} | t={elapsed:.2f}s | "
-                      f"action_rms={float(np.sqrt(np.mean(processed**2))):.4f} rad")
+                      f"action_rms={float(np.sqrt(np.mean(processed**2))):.4f} | "
+                      f"chip_rst={chip_rst_count} ahrs_stall={ahrs_stall_count}")
 
             # --- Timing ---
             elapsed_loop = time.time() - loop_start
@@ -336,6 +352,7 @@ def main():
                 rec_joint_vel[step]  = np.array([vel_dict[j] for j in JOINT_ORDER], dtype=np.float32)
                 rec_raw_action[step] = raw_action
                 rec_timestamp[step]  = loop_start - start_time
+                rec_imu_seq[step]    = imu_seq
 
     except KeyboardInterrupt:
         print("\n[STOP] Ctrl+C received.")
@@ -345,6 +362,8 @@ def main():
         steps_done = min(step + 1, max_steps)
         print(f"\n[DONE] {steps_done} steps in {total:.2f} s "
               f"(avg {steps_done/total:.1f} Hz, {late_count} late steps)")
+        print(f"[IMU]  chip_reset={chip_rst_count} ({100*chip_rst_count/max(steps_done,1):.1f}%)  "
+              f"ahrs_stall={ahrs_stall_count} ({100*ahrs_stall_count/max(steps_done,1):.1f}%)")
         if late_count > steps_done * 0.10:
             print(f"[WARN] {late_count}/{steps_done} steps were late "
                   f"({100*late_count/steps_done:.1f}%) — loop may be overloaded.")
@@ -371,23 +390,27 @@ def main():
         if args.record:
             _REC_DIR.mkdir(parents=True, exist_ok=True)
             ts = int(time.time())
+            ts_str  = time.strftime("%Y%m%d_%H%M%S", time.localtime(ts))
             vx_str  = f"{command[0]:.2f}".replace(".", "p")
             kp_str  = f"{_kp:.0f}"
             kd_str  = f"{_kd:.1f}".replace(".", "p")
-            rec_path = _REC_DIR / f"data_{ts}_{vx_str}_{kp_str}_{kd_str}.npz"
+            rec_path = _REC_DIR / f"data_{ts_str}_{vx_str}_{kp_str}_{kd_str}.npz"
             np.savez(
                 rec_path,
-                accel         = rec_accel[:steps_done],
-                gyro          = rec_gyro[:steps_done],
-                quat          = rec_quat[:steps_done],
-                joint_pos     = rec_joint_pos[:steps_done],
-                joint_vel     = rec_joint_vel[:steps_done],
-                raw_action    = rec_raw_action[:steps_done],
-                timestamp_rel = rec_timestamp[:steps_done],
-                command       = command,
-                control_hz    = np.float32(CONTROL_HZ),
-                action_scale  = np.float32(ACTION_SCALE),
-                timestamp     = np.int64(ts),
+                accel            = rec_accel[:steps_done],
+                gyro             = rec_gyro[:steps_done],
+                quat             = rec_quat[:steps_done],
+                joint_pos        = rec_joint_pos[:steps_done],
+                joint_vel        = rec_joint_vel[:steps_done],
+                raw_action       = rec_raw_action[:steps_done],
+                timestamp_rel    = rec_timestamp[:steps_done],
+                imu_seq          = rec_imu_seq[:steps_done],
+                command          = command,
+                control_hz       = np.float32(CONTROL_HZ),
+                action_scale     = np.float32(ACTION_SCALE),
+                timestamp        = np.int64(ts),
+                chip_rst_count   = np.int64(chip_rst_count),
+                ahrs_stall_count = np.int64(ahrs_stall_count),
             )
             print(f"[REC] Saved {steps_done} steps → {rec_path}")
 
