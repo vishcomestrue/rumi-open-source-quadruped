@@ -1,135 +1,574 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Rumi — Open Source Quadruped Robot</title>
-  <style>
-    * {
-      margin: 0;
-      padding: 0;
-      box-sizing: border-box;
-    }
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>RUMI — An Accessible Platform for Learning Quadruped Locomotion</title>
+<meta name="description" content="Rumi is a low-cost, open-source 12-DoF quadruped built on Dynamixel MX-64 servos with a validated sim-to-real reinforcement learning pipeline.">
 
-    body {
-      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-      background: #0d1117;
-      color: #e6edf3;
-      min-height: 100vh;
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-      justify-content: center;
-      text-align: center;
-      padding: 2rem;
-    }
+<meta property="og:title" content="RUMI — An Accessible Platform for Learning Quadruped Locomotion">
+<meta property="og:description" content="Low-cost servo quadruped with a validated sim-to-real RL pipeline. Hardware build, MuJoCo training, system identification, and 50 Hz on-robot deployment.">
+<meta property="og:image" content="assets/images/teaser_poster.jpg">
+<meta property="og:type" content="website">
 
-    .container {
-      max-width: 640px;
-    }
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Google+Sans:wght@400;500;700&family=Noto+Sans:wght@400;500;700&family=Castoro:ital@0;1&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
 
-    .badge {
-      display: inline-block;
-      background: #21262d;
-      border: 1px solid #30363d;
-      border-radius: 999px;
-      padding: 0.25rem 0.75rem;
-      font-size: 0.75rem;
-      color: #8b949e;
-      letter-spacing: 0.05em;
-      text-transform: uppercase;
-      margin-bottom: 1.5rem;
-    }
+<style>
+  :root {
+    --bg: #ffffff;
+    --fg: #1f2933;
+    --muted: #5b6573;
+    --link: #2b6cb0;
+    --link-hover: #1a4f87;
+    --accent: #0f766e;
+    --border: #e3e6ea;
+    --code-bg: #f6f8fa;
+    --max: 980px;
+    --max-narrow: 760px;
+  }
 
-    h1 {
-      font-size: clamp(2rem, 6vw, 3.5rem);
-      font-weight: 700;
-      letter-spacing: -0.02em;
-      margin-bottom: 1rem;
-      background: linear-gradient(135deg, #e6edf3 0%, #8b949e 100%);
-      -webkit-background-clip: text;
-      -webkit-text-fill-color: transparent;
-      background-clip: text;
-    }
+  *, *::before, *::after { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body {
+    margin: 0;
+    font-family: 'Noto Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    color: var(--fg);
+    background: var(--bg);
+    line-height: 1.65;
+    font-size: 17px;
+    -webkit-font-smoothing: antialiased;
+  }
 
-    .tagline {
-      font-size: 1.1rem;
-      color: #8b949e;
-      line-height: 1.6;
-      margin-bottom: 2.5rem;
-    }
+  a { color: var(--link); text-decoration: none; }
+  a:hover { color: var(--link-hover); text-decoration: underline; }
 
-    .actions {
-      display: flex;
-      gap: 0.75rem;
-      justify-content: center;
-      flex-wrap: wrap;
-    }
+  .container { max-width: var(--max); margin: 0 auto; padding: 0 1.25rem; }
+  .narrow { max-width: var(--max-narrow); margin: 0 auto; padding: 0 1.25rem; }
 
-    a.btn {
-      display: inline-flex;
-      align-items: center;
-      gap: 0.4rem;
-      padding: 0.6rem 1.25rem;
-      border-radius: 6px;
-      font-size: 0.9rem;
-      font-weight: 500;
-      text-decoration: none;
-      transition: opacity 0.15s;
-    }
+  /* Hero */
+  .hero {
+    padding: 4rem 1.25rem 2rem;
+    text-align: center;
+  }
+  .hero h1 {
+    font-family: 'Google Sans', 'Noto Sans', sans-serif;
+    font-size: clamp(1.8rem, 4.5vw, 2.6rem);
+    font-weight: 700;
+    line-height: 1.2;
+    margin: 0 0 0.5rem;
+    letter-spacing: -0.01em;
+  }
+  .hero .subtitle {
+    font-size: clamp(1rem, 2vw, 1.15rem);
+    color: var(--muted);
+    margin: 0.25rem 0 1.5rem;
+  }
+  .authors {
+    font-size: 1.05rem;
+    margin: 1rem 0 0.25rem;
+  }
+  .authors a { color: var(--fg); border-bottom: 1px dotted var(--muted); }
+  .authors a:hover { color: var(--link); border-color: var(--link); }
+  .affil {
+    color: var(--muted);
+    font-size: 0.95rem;
+    margin-bottom: 1.75rem;
+  }
 
-    a.btn:hover {
-      opacity: 0.8;
-    }
+  .links {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+    justify-content: center;
+    margin-bottom: 2rem;
+  }
+  .pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+    padding: 0.5rem 1rem;
+    border-radius: 999px;
+    background: #1f2933;
+    color: #fff !important;
+    font-size: 0.92rem;
+    font-weight: 500;
+    transition: background 0.15s, transform 0.05s;
+    border: 1px solid #1f2933;
+  }
+  .pill:hover { background: #0f1620; text-decoration: none; transform: translateY(-1px); }
+  .pill.alt { background: #fff; color: var(--fg) !important; border: 1px solid var(--border); }
+  .pill.alt:hover { background: #f6f8fa; }
+  .pill svg { width: 16px; height: 16px; }
 
-    a.btn-primary {
-      background: #238636;
-      color: #fff;
-      border: 1px solid #2ea043;
-    }
+  /* Teaser */
+  .teaser {
+    max-width: var(--max);
+    margin: 1rem auto 0;
+    padding: 0 1.25rem;
+  }
+  .teaser video, .teaser img {
+    width: 100%;
+    border-radius: 10px;
+    display: block;
+    background: #000;
+  }
+  .caption {
+    color: var(--muted);
+    font-size: 0.92rem;
+    text-align: center;
+    margin-top: 0.75rem;
+    line-height: 1.5;
+  }
+  .caption b { color: var(--fg); font-weight: 600; }
 
-    a.btn-secondary {
-      background: #21262d;
-      color: #e6edf3;
-      border: 1px solid #30363d;
-    }
+  /* Sections */
+  section { padding: 3rem 0; }
+  section + section { border-top: 1px solid var(--border); }
+  h2 {
+    font-family: 'Google Sans', sans-serif;
+    font-size: 1.6rem;
+    font-weight: 700;
+    margin: 0 0 1rem;
+    text-align: center;
+  }
+  h3 {
+    font-family: 'Google Sans', sans-serif;
+    font-size: 1.15rem;
+    margin: 1.75rem 0 0.5rem;
+  }
+  p { margin: 0 0 1rem; }
 
-    footer {
-      margin-top: 4rem;
-      font-size: 0.8rem;
-      color: #484f58;
-    }
+  ul.tight { padding-left: 1.25rem; margin: 0.5rem 0 1rem; }
+  ul.tight li { margin-bottom: 0.35rem; }
 
-    footer a {
-      color: #484f58;
-      text-decoration: none;
-    }
+  /* Cards / specs */
+  .specs {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    gap: 1rem;
+    margin: 1.5rem 0;
+  }
+  .spec {
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 1rem 1.1rem;
+    background: #fafbfc;
+  }
+  .spec .k { color: var(--muted); font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.05em; }
+  .spec .v { font-size: 1.05rem; font-weight: 600; margin-top: 0.25rem; }
+  .spec .s { color: var(--muted); font-size: 0.85rem; }
 
-    footer a:hover {
-      color: #8b949e;
-    }
-  </style>
+  /* Video grid */
+  .video-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+    gap: 1.5rem;
+    margin: 1.5rem 0;
+  }
+  .vcard video {
+    width: 100%;
+    border-radius: 8px;
+    background: #000;
+    display: block;
+  }
+  .vcard .vtitle {
+    font-weight: 600;
+    margin-top: 0.6rem;
+    font-size: 0.98rem;
+  }
+  .vcard .vdesc {
+    color: var(--muted);
+    font-size: 0.88rem;
+    margin-top: 0.15rem;
+  }
+
+  /* BibTeX */
+  pre.bibtex {
+    background: var(--code-bg);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 1rem 1.1rem;
+    overflow-x: auto;
+    font-family: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 0.85rem;
+    line-height: 1.55;
+    margin: 0;
+  }
+
+  /* Footer */
+  footer {
+    padding: 2.5rem 1.25rem 3rem;
+    text-align: center;
+    color: var(--muted);
+    font-size: 0.85rem;
+    border-top: 1px solid var(--border);
+  }
+  footer a { color: var(--muted); }
+  footer a:hover { color: var(--link); }
+
+  /* Inline emphasis */
+  .lede { font-size: 1.05rem; }
+  .quote-pill {
+    display: inline-block;
+    background: #e8f4ff;
+    color: #1a4f87;
+    font-weight: 600;
+    padding: 0.1rem 0.55rem;
+    border-radius: 4px;
+    font-size: 0.92em;
+  }
+
+  @media (max-width: 600px) {
+    .hero { padding-top: 2.5rem; }
+    section { padding: 2.25rem 0; }
+  }
+</style>
 </head>
 <body>
+
+<!-- ============ HERO ============ -->
+<header class="hero">
   <div class="container">
-    <div class="badge">Open Source Robotics</div>
-    <h1>Rumi</h1>
-    <p class="tagline">
-      An open source quadruped robot — designed to be affordable,
-      hackable, and a platform for learning legged locomotion.
-    </p>
-    <div class="actions">
-      <a class="btn btn-primary" href="https://github.com/vishcomestrue/rumi-open-source-quadruped">
-        View on GitHub
+    <h1>RUMI</h1>
+    <p class="subtitle"><b>An Open Source, Low Cost, Servo-Actuated Quadruped</b><br>An accessible platform for learning quadruped locomotion.</p>
+
+    <div class="links">
+      <a class="pill" href="https://github.com/vishcomestrue/rumi-open-source-quadruped" target="_blank" rel="noopener">
+        <svg viewBox="0 0 16 16" fill="currentColor"><path d="M8 0C3.58 0 0 3.58 0 8a8 8 0 005.47 7.59c.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>
+        Hardware &amp; Deployment
       </a>
-      <a class="btn btn-secondary" href="https://github.com/vishcomestrue/rumi-open-source-quadruped/releases">
-        Releases
+      <a class="pill" href="https://github.com/vishcomestrue/rumi-mjlab" target="_blank" rel="noopener">
+        <svg viewBox="0 0 16 16" fill="currentColor"><path d="M8 0C3.58 0 0 3.58 0 8a8 8 0 005.47 7.59c.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>
+        Training (mjlab)
       </a>
+      <a class="pill alt" href="#video">▶ Video Results</a>
+      <a class="pill alt" href="#build">🛠 Build Your Own</a>
     </div>
   </div>
+</header>
 
-  <footer>
-    <a href="https://github.com/vishcomestrue/rumi-open-source-quadruped">github.com/vishcomestrue/rumi-open-source-quadruped</a>
-  </footer>
+<!-- ============ TEASER VIDEO ============ -->
+<div class="teaser">
+  <video autoplay muted loop playsinline poster="assets/images/teaser_poster.jpg">
+    <source src="assets/videos/teaser.mp4" type="video/mp4">
+  </video>
+  <p class="caption">
+    <b>Rumi</b> is a 12-DoF open-source quadruped driven by off-the-shelf Dynamixel MX-64 servos.
+    Locomotion and getup policies are trained in MuJoCo with PPO, then deployed at 50&nbsp;Hz on a Raspberry&nbsp;Pi&nbsp;4 &mdash; no simulator at runtime.
+  </p>
+</div>
+
+<!-- ============ ABSTRACT ============ -->
+<section id="abstract">
+  <div class="narrow">
+    <h2>Abstract</h2>
+    <p class="lede">
+      Legged robots that learn to walk via reinforcement learning are typically demonstrated on hardware that costs tens of thousands of
+      dollars and uses quasi-direct-drive actuators with rich torque feedback. <b>Rumi</b> asks a simpler question: how far can you get
+      with <span class="quote-pill">low-cost servo motors</span>, a Raspberry Pi, and a single low-end IMU?
+    </p>
+    <p>
+      We present a complete, open-source sim-to-real pipeline for a 12-DoF quadruped built on Dynamixel MX-64 servos.
+      The robot is modeled in MuJoCo, its actuators are identified from chirp and step responses using CMA-ES, and
+      two policies &mdash; <b>velocity tracking</b> and <b>get-up</b> &mdash; are trained with PPO in our
+      <a href="https://github.com/vishcomestrue/rumi-mjlab" target="_blank" rel="noopener">rumi-mjlab</a> environment. Trained MLP policies
+      run on a Raspberry Pi 4 at a 50&nbsp;Hz control loop, with observations assembled from joint encoders and a BNO-080 IMU.
+      We share the URDF, hardware design, system-identification code, training code, and the deployment stack so that the platform
+      can be reproduced and extended by others.
+    </p>
+  </div>
+</section>
+
+<!-- ============ HARDWARE ============ -->
+<section id="hardware">
+  <div class="narrow">
+    <h2>The Robot</h2>
+    <p>
+      Rumi is intentionally built from parts that anyone can buy. The actuators are 12 ROBOTIS Dynamixel MX-64 servos
+      (three per leg) communicating over a shared 3-pin TTL bus. The on-board computer is a Raspberry Pi 4, the only proprioceptive
+      sensors beyond joint encoders are a single BNO-080 IMU, and the chassis is laser-cut and 3D-printed.
+    </p>
+    <div class="specs">
+      <div class="spec"><div class="k">Actuators</div><div class="v">12 &times; Dynamixel MX-64</div><div class="s">3-pin TTL bus &middot; PD control</div></div>
+      <div class="spec"><div class="k">Compute</div><div class="v">Raspberry Pi 4</div><div class="s">U2D2 USB-serial at 4 Mbaud</div></div>
+      <div class="spec"><div class="k">IMU</div><div class="v">BNO-080</div><div class="s">I²C, orientation + accel</div></div>
+      <div class="spec"><div class="k">Control rate</div><div class="v">50 Hz</div><div class="s">On-robot, no simulator</div></div>
+      <div class="spec"><div class="k">Degrees of freedom</div><div class="v">12 (3 per leg)</div><div class="s">Hip-roll, hip-pitch, knee</div></div>
+      <div class="spec"><div class="k">Actuator class</div><div class="v">Low-cost servos</div><div class="s">Off-the-shelf, hobby-grade bus</div></div>
+    </div>
+  </div>
+</section>
+
+<!-- ============ APPROACH ============ -->
+<section id="approach">
+  <div class="narrow">
+    <h2>Approach</h2>
+
+    <h3>1. Build &amp; model</h3>
+    <p>
+      The chassis is designed parametrically in
+      <a href="https://github.com/CadQuery/cadquery" target="_blank" rel="noopener"><b>CadQuery</b></a>
+      &mdash; a Python-based, code-defined CAD toolkit &mdash; so the entire mechanical design is reproducible from a script and
+      diff-friendly in git. From there it is exported to URDF, ported to MuJoCo, and the masses, inertias, and joint limits are
+      taken from the CAD model and refined against the real robot.
+    </p>
+
+    <h3>2. System identification</h3>
+    <p>
+      Servo actuators are the dominant source of the sim-to-real gap on this platform. We drive each motor with chirp and step
+      signals, log torque and position, and fit a simulated actuator (P/D gains, friction, backlash) to the measured response
+      using CMA-ES. The identified parameters are then plugged back into MuJoCo so the simulator behaves like the real motor.
+    </p>
+
+    <h3>3. RL training in <code>rumi-mjlab</code></h3>
+    <p>
+      Training is built on top of <a href="https://github.com/mujocolab/mjlab" target="_blank" rel="noopener"><b>mjlab</b></a>
+      &mdash; an Isaac-Lab-style API powered by MuJoCo-Warp. We adapt mjlab to register Rumi as a new robot and add two tasks,
+      training each with PPO over 4096+ parallel environments:
+    </p>
+    <ul class="tight">
+      <li><b>Velocity tracking</b> &mdash; 48-dim observation, IMU accelerometer in place of ground-truth body velocity, commanded linear and angular velocity.</li>
+      <li><b>Get-up</b> &mdash; 41-dim observation, curriculum on body-height target, observation normalization enabled.</li>
+    </ul>
+    <p>
+      Both policies are small MLPs designed to fit comfortably on the Pi.
+    </p>
+
+    <h3>4. Deployment at 50 Hz</h3>
+    <p>
+      The deployment stack runs the policy in pure PyTorch (CPU) at 50&nbsp;Hz. The observation pipeline pulls joint state via
+      GroupSyncRead over Dynamixel SDK and orientation from the BNO-080. The output is a target joint position vector, sent
+      back to the motors with GroupSyncWrite. A USB latency-timer tweak is required to sustain the loop &mdash; the repo includes a
+      one-shot script for it.
+    </p>
+  </div>
+</section>
+
+<!-- ============ VIDEO RESULTS ============ -->
+<section id="video">
+  <div class="container">
+    <h2>Video Results</h2>
+
+    <h3 style="text-align:center;">Hardware</h3>
+    <div class="video-grid">
+      <div class="vcard">
+        <video controls muted playsinline preload="metadata">
+          <source src="assets/videos/hardware_locomotion.mp4" type="video/mp4">
+        </video>
+        <div class="vtitle">Forward locomotion</div>
+        <div class="vdesc">Velocity-tracking policy at ~0.5 m/s on the real robot.</div>
+      </div>
+      <div class="vcard">
+        <video controls muted playsinline preload="metadata">
+          <source src="assets/videos/hardware_getup.mp4" type="video/mp4">
+        </video>
+        <div class="vtitle">Get-up from a 25 cm drop</div>
+        <div class="vdesc">Get-up policy recovers from a non-trivial initial pose.</div>
+      </div>
+    </div>
+
+    <h3 style="text-align:center;">Simulation</h3>
+    <div class="video-grid">
+      <div class="vcard">
+        <video controls muted playsinline preload="metadata">
+          <source src="assets/videos/sim_locomotion.mp4" type="video/mp4">
+        </video>
+        <div class="vtitle">Velocity tracking in MuJoCo</div>
+        <div class="vdesc">PPO policy tracking a 0.5 m/s linear command.</div>
+      </div>
+      <div class="vcard">
+        <video controls muted playsinline preload="metadata">
+          <source src="assets/videos/sim_getup.mp4" type="video/mp4">
+        </video>
+        <div class="vtitle">Get-up in MuJoCo</div>
+        <div class="vdesc">Curriculum-trained policy reaching a target body height.</div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ============ LIMITATIONS ============ -->
+<section id="limitations">
+  <div class="narrow">
+    <h2>Limitations &amp; Failure Modes</h2>
+    <p>
+      Not everything works. Two failure modes dominate on the real robot:
+    </p>
+    <ul class="tight">
+      <li><b>IMU drift &amp; saturation.</b> A single low-end IMU is insufficient when the robot tips past a certain pitch &mdash; the policy receives a noisy orientation estimate and recovers inconsistently.</li>
+      <li><b>Servo bandwidth &amp; backlash.</b> Smooth gaits learned in simulation can become jittery on hardware when commanded velocities are pushed past what the MX-64 can comfortably track at 50 Hz.</li>
+      <li><b>Actuator choice was not benchmarked.</b> We committed to the Dynamixel MX-64 early because it was familiar and well-supported, and did not systematically benchmark it against other low-cost servo families (e.g. Robstride, LX-16A, STS-3215, Damiao, Gim, or QDD-style alternatives in a similar price band). A proper actuator survey &mdash; on torque-to-cost, control bandwidth, and bus stability under load &mdash; is open work and would likely affect the platform's gait quality and price floor.</li>
+    </ul>
+    <div class="video-grid" style="margin-top:1.25rem;">
+      <div class="vcard">
+        <video controls muted playsinline preload="metadata">
+          <source src="assets/videos/failure_imu.mp4" type="video/mp4">
+        </video>
+        <div class="vtitle">IMU-driven failure</div>
+        <div class="vdesc">Orientation estimate degrades, policy commits to a bad recovery.</div>
+      </div>
+      <div class="vcard">
+        <video controls muted playsinline preload="metadata">
+          <source src="assets/videos/failure_locomotion.mp4" type="video/mp4">
+        </video>
+        <div class="vtitle">Failed locomotion attempt</div>
+        <div class="vdesc">Early policy where actuator dynamics were not yet identified.</div>
+      </div>
+    </div>
+    <p style="margin-top:1.25rem;">
+      Both failure modes inform the next iteration: a better IMU + small contact sensors, and tighter actuator identification
+      under load.
+    </p>
+  </div>
+</section>
+
+<!-- ============ BUILD YOUR OWN ============ -->
+<section id="build">
+  <div class="narrow">
+    <h2>Build Your Own Rumi</h2>
+    <p>
+      Rumi is open source. Both the training code and the on-robot deployment stack are MIT-licensed and reproducible from
+      off-the-shelf parts.
+    </p>
+    <ul class="tight">
+      <li>
+        <a href="https://github.com/vishcomestrue/rumi-open-source-quadruped" target="_blank" rel="noopener">rumi-open-source-quadruped</a>
+        &mdash; URDF, MuJoCo model, system-identification scripts, and the Raspberry Pi deployment code (Dynamixel SDK + BNO-080 driver + 50 Hz control loop).
+      </li>
+      <li>
+        <a href="https://github.com/vishcomestrue/rumi-mjlab" target="_blank" rel="noopener">rumi-mjlab</a>
+        &mdash; RL tasks (velocity tracking + get-up) adapted from
+        <a href="https://github.com/mujocolab/mjlab" target="_blank" rel="noopener">mjlab</a> /
+        <code>mujoco-warp</code>, with PPO configs and W&amp;B logging.
+      </li>
+    </ul>
+    <p>
+      A typical reproduction path is: build the chassis from CAD, flash the motors with the IDs in the README, run the
+      single-motor SysID notebook on one MX-64, transfer the parameters to all twelve, then train and deploy.
+    </p>
+
+    <h3 style="text-align:center; margin-top:2rem;">Star History</h3>
+    <p class="caption" style="margin-bottom:0.75rem;">
+      If RUMI is useful to you, a star on either repository helps others discover it.
+    </p>
+    <a href="https://star-history.com/#vishcomestrue/rumi-open-source-quadruped&vishcomestrue/rumi-mjlab&Date" target="_blank" rel="noopener">
+      <picture>
+        <source media="(prefers-color-scheme: dark)"
+                srcset="https://api.star-history.com/svg?repos=vishcomestrue/rumi-open-source-quadruped,vishcomestrue/rumi-mjlab&type=Date&theme=dark">
+        <img src="https://api.star-history.com/svg?repos=vishcomestrue/rumi-open-source-quadruped,vishcomestrue/rumi-mjlab&type=Date"
+             alt="Star history for rumi-open-source-quadruped and rumi-mjlab"
+             style="width:100%; max-width:760px; display:block; margin:0 auto; border:1px solid var(--border); border-radius:8px;">
+      </picture>
+    </a>
+  </div>
+</section>
+
+<!-- ============ SYSID DETAIL ============ -->
+<section id="sysid">
+  <div class="narrow">
+    <h2>How to Reproduce: System Identification</h2>
+    <p>
+      The single biggest source of sim-to-real gap on a servo platform is the actuator. To close it, we run a two-stage
+      identification pipeline before any RL training is taken seriously.
+    </p>
+
+    <h3>Stage 1 &mdash; Single-motor rig</h3>
+    <p>
+      One MX-64 motor is mounted on a fixed bracket with a known pendulum load attached to the output horn (a printed arm with a
+      machined mass at the tip). The motor is driven through a sequence of excitation signals while position, velocity, and
+      commanded target are logged at the control loop rate:
+    </p>
+    <ul class="tight">
+      <li><b>hold</b> &mdash; constant offset, to characterize steady-state error.</li>
+      <li><b>step</b> &mdash; alternating &plusmn; amplitude, for transient response.</li>
+      <li><b>sine</b> and <b>triangle</b> &mdash; for smooth tracking behavior.</li>
+      <li><b>chirp</b> &mdash; a linear frequency sweep from <code>f_start</code> to <code>f_end</code>, which is the most informative
+        signal for identifying actuator dynamics.</li>
+    </ul>
+    <p>
+      The recorded traces are then replayed inside a single-joint MuJoCo model, and <b>CMA-ES</b> searches for the actuator
+      parameters that minimize the joint position + velocity RMSE between sim and real:
+    </p>
+<pre class="bibtex">armature      &asymp; 0.0162 kg&middot;m&sup2;     (range [0.0005, 0.5])
+damping       &asymp; 0.594  N&middot;m&middot;s/rad   (range [0.05,   5.0])
+frictionloss  &asymp; 0.001  N&middot;m           (range [0.001,  1.0])
+
+loss = RMSE(pos) + w &middot; RMSE(vel),    with w = 0</pre>
+    <p>
+      A single shared triplet is fit across all joints &mdash; the MX-64s are nominally identical, and shared parameters keep the
+      model honest. We set the velocity-loss weight <code>w = 0</code> and optimize against position error only.
+      Empirically, minimizing position error alone also drove the velocity error down, so the extra loss term added noise to
+      the CMA-ES objective without improving the fit. Code lives in <code>sim2real/sysid_load/</code> in the hardware repo
+      (<code>load_recorder.py</code>, <code>sysid_load.py</code>, <code>rollout_sysid.py</code>).
+    </p>
+
+    <h3>Stage 2 &mdash; Full robot visual validation</h3>
+    <p>
+      The identified parameters are written back into <code>rumi.xml</code> and validated on the full 12-DoF robot. The robot is
+      commanded through an IK-driven motion while MuJoCo replays the same commands, and the simulated and real trajectories are
+      overlaid in a <a href="https://github.com/nerfstudio-project/viser" target="_blank" rel="noopener">viser</a> 3D viewer.
+      Feet are anchored to a shared floor reference so the body can shift to match the centroid, keeping the visual comparison
+      fair rather than dominated by base drift.
+    </p>
+
+    <p style="margin-top:1.25rem;">
+      Anyone reproducing RUMI is encouraged to repeat both stages on their own hardware: even with the same servo, the friction
+      and damping vary enough between units and over time that re-identifying is more reliable than copying our numbers.
+    </p>
+  </div>
+</section>
+
+<!-- ============ ACKNOWLEDGEMENTS ============ -->
+<section id="ack">
+  <div class="narrow">
+    <h2>Acknowledgements</h2>
+    <p>
+      RUMI's training environment is adapted from
+      <a href="https://github.com/mujocolab/mjlab" target="_blank" rel="noopener"><b>mjlab</b></a>
+      &mdash; an Isaac-Lab-style API powered by MuJoCo-Warp for RL and robotics research.
+      Most of the heavy lifting for parallel simulation, PPO configuration, and the env/task abstractions comes from upstream
+      mjlab; the contribution of <a href="https://github.com/vishcomestrue/rumi-mjlab" target="_blank" rel="noopener">rumi-mjlab</a>
+      is the robot registration, the Rumi-specific reward and observation design, and the curriculum used for the two tasks
+      shown above. We thank the mjlab authors for releasing it openly.
+    </p>
+    <p>
+      The mechanical design is authored in
+      <a href="https://github.com/CadQuery/cadquery" target="_blank" rel="noopener"><b>CadQuery</b></a>, an open-source
+      Python-based parametric CAD framework. CadQuery makes the chassis fully scripted, version-controllable, and trivially
+      forkable &mdash; if you change a leg length, the URDF and MuJoCo model regenerate from the same source. Thanks to the
+      CadQuery maintainers for that workflow.
+    </p>
+  </div>
+</section>
+
+<!-- ============ CITATION ============ -->
+<section id="cite">
+  <div class="narrow">
+    <h2>Citation</h2>
+    <p>If Rumi is useful in your research, please cite the thesis:</p>
+<pre class="bibtex">@mastersthesis{rumi2026,
+  title  = {Sim-to-Real Policy Transfer on a Low-Cost Servo Quadruped under Sensor and Actuator Constraints},
+  author = {Vishwanath R},
+  school = {Indian Institute of Technology Jodhpur},
+  year   = {2026},
+  note   = {M.Tech, Robotics and Mobility Systems}
+}</pre>
+  </div>
+</section>
+
+<footer>
+  <p>
+    Website source &middot;
+    <a href="https://github.com/vishcomestrue/rumi-open-source-quadruped">rumi-open-source-quadruped</a> &middot;
+    <a href="https://github.com/vishcomestrue/rumi-mjlab">rumi-mjlab</a>
+  </p>
+  <p style="margin-top:0.5rem;">
+    Training environment adapted from <a href="https://github.com/mujocolab/mjlab">mjlab</a>.
+    Page template adapted from <a href="https://nerfies.github.io">Nerfies</a>.
+  </p>
+</footer>
+
 </body>
 </html>
